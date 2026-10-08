@@ -1,0 +1,88 @@
+WhatsApp Clone - Django
+
+A real-time WhatsApp Clone web application developed using Python, Django,
+Django Channels, WebSocket, HTML, CSS and JavaScript.
+
+Features
+
+User authentication
+One-to-one chat
+Real-time messaging
+Message delivery status
+Read / unread message status
+Online / offline presence
+Unread message count
+Add contacts
+Delete contacts
+Search users
+Send image and video messages
+Message notifications
+Voice calling using WebRTC
+
+Technologies Used
+------------------
+Backend
+
+Python
+Django
+Django Channels
+Daphne
+SQLite
+
+Frontend
+
+HTML5
+CSS3
+JavaScript
+WebSocket
+WebRTC
+
+Project Structure
+
+
+whatsapp/
+│
+├── manage.py
+├── requirements.txt
+├── README.md
+│
+├── backend/
+│   ├── settings.py
+│   ├── urls.py
+│   ├── asgi.py
+│   └── routing.py
+│
+├── chat/
+│   ├── models.py
+│   ├── views.py
+│   ├── consumers.py
+│   ├── routing.py
+│   └── urls.py
+│
+├── accounts/
+│   ├── models.py
+│   ├── views.py
+│   └── urls.py
+│
+├── templates/
+│     
+|
+└── static/
+    ├── css/
+    └── js/
+
+
+Installation
+
+git clone YOUR_GITHUB_REPOSITORY_URL
+
+Create a virtual environment ->  python -m venv venv
+Activate the virtual environment -> venv\Scripts\activate
+Install dependencies -> pip install -r requirements.txt
+Run database migrations -> python manage.py makemigrations
+python manage.py migrate
+
+Create a superuser -> python manage.py createsuperuser
+Start the development server -> python manage.py runserver
+
+Open the application in your browser: http://127.0.0.1:8000/

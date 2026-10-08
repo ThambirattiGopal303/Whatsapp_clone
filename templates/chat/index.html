@@ -1,0 +1,862 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="csrf-token"
+        content="{{ csrf_token }}"
+    >
+
+    <title>WhatsApp Clone</title>
+
+    <link
+        rel="stylesheet"
+        href="{% static 'css/chat.css' %}"
+    >
+
+</head>
+
+
+<body
+    data-user-id="{{ request.user.id }}"
+    data-username="{{ request.user.username }}"
+>
+
+
+<div
+    class="whatsapp-container"
+    id="whatsappContainer"
+>
+
+
+    <!-- =====================================================
+         SIDEBAR
+    ====================================================== -->
+
+    <aside class="sidebar">
+
+
+        <!-- SIDEBAR HEADER -->
+
+        <header class="sidebar-header">
+
+            <div class="brand">
+
+                <h1>WhatsApp</h1>
+
+            </div>
+
+
+            <div class="header-buttons">
+
+
+                <!-- ADD CONTACT -->
+
+                <button
+                    type="button"
+                    class="icon-button"
+                    id="addContactBtn"
+                    title="Add contact"
+                >
+
+                    <svg
+                        class="header-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                    >
+
+                        <path
+                            d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"
+                        />
+
+                        <circle
+                            cx="9"
+                            cy="7"
+                            r="4"
+                        />
+
+                        <line
+                            x1="19"
+                            y1="8"
+                            x2="19"
+                            y2="14"
+                        />
+
+                        <line
+                            x1="16"
+                            y1="11"
+                            x2="22"
+                            y2="11"
+                        />
+
+                    </svg>
+
+                </button>
+
+
+                <!-- NOTIFICATIONS -->
+
+                <button
+                    type="button"
+                    class="icon-button"
+                    id="notificationBtn"
+                    title="Notifications"
+                >
+
+                    <svg
+                        class="header-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                    >
+
+                        <path
+                            d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"
+                        />
+
+                        <path
+                            d="M13.73 21a2 2 0 0 1-3.46 0"
+                        />
+
+                    </svg>
+
+
+                    <span
+                        class="notification-count hidden"
+                        id="notificationCount"
+                    ></span>
+
+                </button>
+
+            </div>
+
+        </header>
+
+
+
+        <!-- =================================================
+             SEARCH
+        ================================================== -->
+
+        <div class="search-container">
+
+            <span class="search-icon">
+
+                <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+
+                    <circle
+                        cx="11"
+                        cy="11"
+                        r="7"
+                    />
+
+                    <line
+                        x1="16"
+                        y1="16"
+                        x2="21"
+                        y2="21"
+                    />
+
+                </svg>
+
+            </span>
+
+
+            <input
+                type="text"
+                id="contactSearch"
+                placeholder="Search or start new chat"
+                autocomplete="off"
+            >
+
+        </div>
+
+
+
+        <!-- =================================================
+             CONTACT LIST
+        ================================================== -->
+
+        <div
+            class="contact-list"
+            id="contactList"
+        ></div>
+
+
+        <div
+            class="loading-contacts hidden"
+            id="contactLoading"
+        >
+            Loading contacts...
+        </div>
+
+    </aside>
+
+
+
+    <!-- =====================================================
+         CHAT AREA
+    ====================================================== -->
+
+    <main
+        class="chat-area"
+        id="chatArea"
+    >
+
+
+        <!-- =================================================
+             EMPTY CHAT
+        ================================================== -->
+
+        <section
+            class="empty-chat"
+            id="emptyChat"
+        >
+
+            <div class="empty-chat-content">
+
+                <div class="empty-chat-icon">
+
+                    <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="#ffffff"
+                        stroke-width="1.6"
+                    >
+
+                        <path
+                            d="M21 11.5a8.38 8.38 0 0 1-9 8.5
+                               8.7 8.7 0 0 1-4-.9
+                               L3 21l1.9-4.6
+                               A8.5 8.5 0 1 1 21 11.5z"
+                        />
+
+                    </svg>
+
+                </div>
+
+
+                <h2>WhatsApp Web Clone</h2>
+
+                <p>
+                    Send and receive messages securely.
+                </p>
+
+                <p class="empty-chat-small">
+                    Select a contact to start chatting.
+                </p>
+
+            </div>
+
+        </section>
+
+
+
+        <!-- =================================================
+             CHAT INTERFACE
+        ================================================== -->
+
+        <section
+            class="chat-interface hidden"
+            id="chatInterface"
+        >
+
+
+            <!-- CHAT HEADER -->
+
+            <header class="chat-header">
+
+
+                <div class="chat-user-info">
+
+                    <div
+                        class="chat-avatar"
+                        id="chatAvatar"
+                    ></div>
+
+
+                    <div class="chat-user-details">
+
+                        <div
+                            class="chat-username"
+                            id="chatUsername"
+                        >
+                            Contact
+                        </div>
+
+                        <div
+                            class="chat-status"
+                            id="chatStatus"
+                        >
+                            offline
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+
+                <div class="chat-actions">
+
+
+                    <!-- VOICE CALL -->
+
+                    <button
+                        type="button"
+                        class="chat-action-btn"
+                        id="voiceCallBtn"
+                        title="Voice call"
+                    >
+
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+
+                            <path
+                                d="M22 16.92v3
+                                   a2 2 0 0 1-2.18 2
+                                   19.79 19.79 0 0 1-8.63-3.07
+                                   19.5 19.5 0 0 1-6-6
+                                   A19.79 19.79 0 0 1 2.12 4.18
+                                   2 2 0 0 1 4.11 2h3
+                                   a2 2 0 0 1 2 1.72
+                                   12.84 12.84 0 0 0 .7 2.81
+                                   2 2 0 0 1-.45 2.11L8.09 9.91
+                                   a16 16 0 0 0 6 6
+                                   l1.27-1.27
+                                   a2 2 0 0 1 2.11-.45
+                                   12.84 12.84 0 0 0 2.81.7
+                                   A2 2 0 0 1 22 16.92z"
+                            />
+
+                        </svg>
+
+                    </button>
+
+
+
+                    <!-- CHAT MENU -->
+
+                    <button
+                        type="button"
+                        class="chat-action-btn menu-button"
+                        id="chatMenuBtn"
+                        title="Menu"
+                    >
+
+                        <span></span>
+                        <span></span>
+                        <span></span>
+
+                    </button>
+
+
+                    <div
+                        class="contact-menu hidden"
+                        id="contactMenu"
+                    >
+
+                        <button
+                            type="button"
+                            id="deleteContactBtn"
+                            class="menu-danger"
+                        >
+                            Delete contact
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </header>
+
+
+
+            <!-- =================================================
+                 MESSAGES
+            ================================================== -->
+
+            <div
+                class="message-container"
+                id="messageContainer"
+            >
+
+                <div
+                    class="loading-messages hidden"
+                    id="messageLoading"
+                >
+                    Loading messages...
+                </div>
+
+            </div>
+
+
+
+            <!-- TYPING -->
+
+            <div
+                class="typing-indicator hidden"
+                id="typingIndicator"
+            >
+
+                <span></span>
+                <span></span>
+                <span></span>
+
+                <em>typing...</em>
+
+            </div>
+
+
+
+            <!-- =================================================
+                 MESSAGE INPUT
+            ================================================== -->
+
+            <form
+                class="message-input-area"
+                id="messageForm"
+            >
+
+
+                <button
+                    type="button"
+                    class="input-button"
+                    id="attachBtn"
+                    title="Attach media"
+                >
+
+                    <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                    >
+
+                        <path
+                            d="M21.44 11.05l-9.19 9.19
+                               a6 6 0 0 1-8.49-8.49
+                               l9.19-9.19
+                               a4 4 0 0 1 5.66 5.66
+                               l-9.2 9.19
+                               a2 2 0 0 1-2.83-2.83
+                               l8.49-8.48"
+                        />
+
+                    </svg>
+
+                </button>
+
+
+                <input
+                    type="file"
+                    id="mediaInput"
+                    accept="image/*,video/*"
+                    hidden
+                >
+
+
+                <input
+                    type="text"
+                    id="messageInput"
+                    placeholder="Type a message"
+                    autocomplete="off"
+                    maxlength="5000"
+                >
+
+
+                <button
+                    type="submit"
+                    class="send-button"
+                    id="sendMessageBtn"
+                    title="Send"
+                >
+
+                    <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                    >
+
+                        <line
+                            x1="22"
+                            y1="2"
+                            x2="11"
+                            y2="13"
+                        />
+
+                        <polygon
+                            points="22 2 15 22 11 13 2 9 22 2"
+                        />
+
+                    </svg>
+
+                </button>
+
+            </form>
+
+        </section>
+
+    </main>
+
+</div>
+
+
+
+<!-- =========================================================
+     ADD CONTACT MODAL
+========================================================== -->
+
+<div
+    class="modal-overlay hidden"
+    id="addContactModal"
+>
+
+    <div class="modal-box">
+
+        <div class="modal-header">
+
+            <h2>Add New Contact</h2>
+
+            <button
+                type="button"
+                class="close-modal"
+                data-close-modal="addContactModal"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <form id="addContactForm">
+
+            <div class="modal-body">
+
+                <label
+                    for="contactUsernameInput"
+                >
+                    Username
+                </label>
+
+
+                <input
+                    type="text"
+                    id="contactUsernameInput"
+                    placeholder="Enter username"
+                    autocomplete="off"
+                    required
+                >
+
+
+                <div class="modal-help">
+                    Enter the registered username of the person.
+                </div>
+
+
+                <div
+                    class="contact-message"
+                    id="contactMessage"
+                ></div>
+
+            </div>
+
+
+            <div class="modal-footer">
+
+                <button
+                    type="button"
+                    class="cancel-button"
+                    data-close-modal="addContactModal"
+                >
+                    Cancel
+                </button>
+
+
+                <button
+                    type="submit"
+                    class="primary-button"
+                    id="addContactSubmitBtn"
+                >
+                    Add Contact
+                </button>
+
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+
+<!-- =========================================================
+     NOTIFICATION MODAL
+========================================================== -->
+
+<div
+    class="modal-overlay hidden"
+    id="notificationModal"
+>
+
+    <div class="modal-box notification-modal-box">
+
+        <div class="modal-header">
+
+            <h2>Notifications</h2>
+
+            <button
+                type="button"
+                class="close-modal"
+                data-close-modal="notificationModal"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <div
+            class="notification-body"
+            id="notificationList"
+        ></div>
+
+    </div>
+
+</div>
+
+
+
+<!-- =========================================================
+     OUTGOING CALL MODAL
+========================================================== -->
+
+<div
+    class="modal-overlay hidden"
+    id="callModal"
+>
+
+    <div class="modal-box call-modal-box">
+
+        <div class="call-body">
+
+            <div
+                class="large-avatar"
+                id="callAvatar"
+            >
+            </div>
+
+
+            <h3 id="callUserName">
+                Voice Call
+            </h3>
+
+
+            <p id="callStatus">
+                Calling...
+            </p>
+
+
+            <button
+                type="button"
+                class="danger-button call-end-button"
+                id="endCallBtn"
+            >
+                End Call
+            </button>
+
+
+            <button
+                type="button"
+                class="primary-button hidden"
+                id="enableAudioBtn"
+            >
+                Enable Audio
+            </button>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+
+<!-- =========================================================
+     INCOMING CALL MODAL
+========================================================== -->
+
+<div
+    class="modal-overlay hidden"
+    id="incomingCallModal"
+>
+
+    <div class="modal-box call-modal-box">
+
+        <div class="call-body">
+
+            <div
+                class="large-avatar"
+                id="incomingCallAvatar"
+            >
+            </div>
+
+
+            <h3 id="incomingCallerName">
+                Incoming Call
+            </h3>
+
+
+            <p>
+                Incoming voice call
+            </p>
+
+
+            <div class="incoming-call-buttons">
+
+                <button
+                    type="button"
+                    class="danger-button"
+                    id="rejectCallBtn"
+                >
+                    Reject
+                </button>
+
+
+                <button
+                    type="button"
+                    class="primary-button"
+                    id="acceptCallBtn"
+                >
+                    Accept
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+
+<!-- =========================================================
+     REMOTE AUDIO
+========================================================== -->
+
+<audio
+    id="remoteAudio"
+    autoplay
+    playsinline
+></audio>
+
+
+
+<!-- =========================================================
+     TOAST
+========================================================== -->
+
+<div
+    class="toast-container"
+    id="toastContainer"
+></div>
+
+
+
+<!-- =========================================================
+     CONFIGURATION
+========================================================== -->
+
+<script>
+
+window.WHATSAPP_CONFIG = {
+
+    currentUserId:
+        Number("{{ request.user.id }}"),
+
+    currentUsername:
+        "{{ request.user.username|escapejs }}",
+
+
+    contactsUrl:
+        "/api/contacts/",
+
+    addContactUrl:
+        "/api/contacts/add/",
+
+    deleteContactUrl:
+        "/api/contacts/delete/",
+
+    searchUsersUrl:
+        "/api/users/search/",
+
+    messagesUrl:
+        "/api/messages/",
+
+    sendMessageUrl:
+        "/api/messages/send/",
+
+    markReadUrl:
+        "/api/messages/read/",
+
+    notificationsUrl:
+        "/api/notifications/",
+
+    uploadMediaUrl:
+        "/api/messages/media/",
+
+    presenceUrl:
+        "/api/users/",
+
+
+    websocketUrl:
+
+        (
+            window.location.protocol === "https:"
+                ? "wss://"
+                : "ws://"
+        )
+        +
+        window.location.host
+        +
+        "/ws/chat/{{ request.user.id }}/"
+
+};
+
+</script>
+
+
+<script
+    src="{% static 'js/chat.js' %}"
+    defer
+></script>
+
+
+</body>
+
+</html>
