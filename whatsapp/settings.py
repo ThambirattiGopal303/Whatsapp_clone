@@ -99,22 +99,11 @@ DATABASES = {
     "default": {
 
         "ENGINE": "django.db.backends.mysql",
-
-        "NAME": os.getenv("DB_NAME","whatsapp_db"),
-
-        "USER": os.getenv("DB_USER","root"),
-
-        "PASSWORD": os.getenv("DB_PASSWORD","thambu"),
-
-        "HOST": os.getenv("DB_HOST","127.0.0.1"),
-
-        "PORT": os.getenv("DB_PORT","3306"),
-
-        "OPTIONS": {
-
-            "charset": "utf8mb4",
-
-        },
+        "NAME": "whatsapp_db",
+        "USER": "root",
+        "PASSWORD":"thambu",
+        "HOST": "127.0.0.1",
+        "PORT": "3306",
     }
 }
 
@@ -123,8 +112,7 @@ DATABASES = {
 AUTH_PASSWORD_VALIDATORS = [
 
     {
-        "NAME":
-        "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+        "NAME":"django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
 
     {
@@ -179,6 +167,5 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 
-USE_TZ = True
-
 TIME_ZONE = "Asia/Kolkata"
+USE_TZ = True

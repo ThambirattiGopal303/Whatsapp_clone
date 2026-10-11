@@ -1,18 +1,3 @@
-/* =========================================================
-   WHATSAPP CLONE
-   MAIN CHAT JAVASCRIPT
-   =========================================================
-   IMPORTANT:
-   Replace your COMPLETE old chat.js with this file.
-
-   Matches:
-   - chat/index.html
-   - chat/urls.py
-   - Django Channels consumer
-   ========================================================= */
-
-"use strict";
-
 
 /* =========================================================
    1. CONFIGURATION
@@ -25,9 +10,11 @@ const CURRENT_USER_ID = Number(
 );
 
 const CURRENT_USERNAME =
-    CONFIG.currentUsername ||
-    document.body.dataset.username ||
-    "";
+    CONFIG.currentUsername || document.body.dataset.username || "";
+
+const RTC_CONFIG = {
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+};
 
 
 /* =========================================================
@@ -35,10 +22,9 @@ const CURRENT_USERNAME =
    ========================================================= */
 
 let socket = null;
-
 let socketReconnectTimer = null;
 let socketReconnectAttempts = 0;
-let socketWasConnected = false;
+let isUnloading = false;
 
 let selectedUserId = null;
 let selectedContact = null;
@@ -49,589 +35,242 @@ let contactMap = new Map();
 let messageElements = new Map();
 
 let presenceTimer = null;
-
 let isSendingMessage = false;
 
 let currentCallUserId = null;
 let currentCallUsername = "";
-
 let peerConnection = null;
 let localStream = null;
-
 let incomingOffer = null;
 let incomingCallerId = null;
 let incomingCallerName = "";
-
 let pendingIceCandidates = [];
-
 let callStarted = false;
 
 
 /* =========================================================
-   3. DOM HELPER
+   3. DOM HELPERS
    ========================================================= */
 
 function $(id) {
     return document.getElementById(id);
 }
 
+function on(element, type, handler) {
+    if (element) {
+        element.addEventListener(type, handler);
+    }
+}
 
-/* =========================================================
-   4. DOM ELEMENTS
-   ========================================================= */
+function createEl(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined && text !== null) el.textContent = text;
+    return el;
+}
 
 let elements = {};
 
+const ELEMENT_IDS = [
+    "whatsappContainer",
+    "addContactBtn", "notificationBtn", "notificationCount",
+    "contactSearch", "contactList", "contactLoading",
+    "chatArea", "emptyChat", "chatInterface",
+    "chatAvatar", "chatUsername", "chatStatus",
+    "voiceCallBtn", "chatMenuBtn", "contactMenu", "deleteContactBtn",
+    "messageContainer", "messageLoading", "typingIndicator",
+    "messageForm", "attachBtn", "mediaInput", "messageInput",
+    "sendMessageBtn",
+    "addContactModal", "addContactForm", "contactUsernameInput",
+    "contactMessage", "addContactSubmitBtn",
+    "notificationModal", "notificationList",
+    "callModal", "callAvatar", "callUserName", "callStatus", "endCallBtn",
+    "incomingCallModal", "incomingCallAvatar", "incomingCallerName",
+    "rejectCallBtn", "acceptCallBtn",
+    "remoteAudio", "enableAudioBtn", "toastContainer"
+];
+
+function cacheElements() {
+    elements = {};
+    ELEMENT_IDS.forEach(function (id) {
+        elements[id] = $(id);
+    });
+}
+
 
 /* =========================================================
-   5. INITIALIZATION
+   4. INITIALIZATION
    ========================================================= */
 
 document.addEventListener("DOMContentLoaded", function () {
-
     cacheElements();
-
     initializeApplication();
-
 });
 
-
-function cacheElements() {
-
-    elements = {
-
-        /* Main */
-        whatsappContainer: $("whatsappContainer"),
-
-        /* Header */
-        addContactBtn: $("addContactBtn"),
-        notificationBtn: $("notificationBtn"),
-        notificationCount: $("notificationCount"),
-
-        /* Contacts */
-        contactSearch: $("contactSearch"),
-        contactList: $("contactList"),
-        contactLoading: $("contactLoading"),
-
-        /* Chat */
-        chatArea: $("chatArea"),
-        emptyChat: $("emptyChat"),
-        chatInterface: $("chatInterface"),
-
-        chatAvatar: $("chatAvatar"),
-        chatUsername: $("chatUsername"),
-        chatStatus: $("chatStatus"),
-
-        voiceCallBtn: $("voiceCallBtn"),
-        chatMenuBtn: $("chatMenuBtn"),
-        contactMenu: $("contactMenu"),
-        deleteContactBtn: $("deleteContactBtn"),
-
-        /* Messages */
-        messageContainer: $("messageContainer"),
-        messageLoading: $("messageLoading"),
-        typingIndicator: $("typingIndicator"),
-
-        /* Message form */
-        messageForm: $("messageForm"),
-        attachBtn: $("attachBtn"),
-        mediaInput: $("mediaInput"),
-        messageInput: $("messageInput"),
-        sendMessageBtn: $("sendMessageBtn"),
-
-        /* Add contact modal */
-        addContactModal: $("addContactModal"),
-        addContactForm: $("addContactForm"),
-        contactUsernameInput: $("contactUsernameInput"),
-        contactMessage: $("contactMessage"),
-        addContactSubmitBtn: $("addContactSubmitBtn"),
-
-        /* Notifications */
-        notificationModal: $("notificationModal"),
-        notificationList: $("notificationList"),
-
-        /* Call */
-        callModal: $("callModal"),
-        callAvatar: $("callAvatar"),
-        callUserName: $("callUserName"),
-        callStatus: $("callStatus"),
-        endCallBtn: $("endCallBtn"),
-
-        /* Incoming call */
-        incomingCallModal: $("incomingCallModal"),
-        incomingCallAvatar: $("incomingCallAvatar"),
-        incomingCallerName: $("incomingCallerName"),
-        rejectCallBtn: $("rejectCallBtn"),
-        acceptCallBtn: $("acceptCallBtn"),
-
-        /* Audio */
-        remoteAudio: $("remoteAudio"),
-
-        /* Toast */
-        toastContainer: $("toastContainer")
-    };
-}
-
-
-/* =========================================================
-   6. APPLICATION START
-   ========================================================= */
-
 async function initializeApplication() {
-
     if (!CURRENT_USER_ID) {
-
-        console.error(
-            "Current user ID was not found."
-        );
-
-        showToast(
-            "User information is missing.",
-            "error"
-        );
-
+        console.error("Current user ID was not found.");
+        showToast("User information is missing.", "error");
         return;
     }
 
-
     bindEvents();
-
     connectWebSocket();
 
     await loadContacts();
-
     await loadNotifications();
-
 }
 
 
 /* =========================================================
-   7. EVENT BINDINGS
+   5. EVENT BINDINGS
    ========================================================= */
 
 function bindEvents() {
 
-    /* Add contact */
-    if (elements.addContactBtn) {
-
-        elements.addContactBtn.addEventListener(
-            "click",
-            function () {
-
-                openModal("addContactModal");
-
-                if (elements.contactUsernameInput) {
-                    elements.contactUsernameInput.focus();
-                }
-
-            }
-        );
-
-    }
-
-
-    /* Add contact form */
-    if (elements.addContactForm) {
-
-        elements.addContactForm.addEventListener(
-            "submit",
-            handleAddContact
-        );
-
-    }
-
-
-    /* Search */
-    if (elements.contactSearch) {
-
-        elements.contactSearch.addEventListener(
-            "input",
-            function () {
-
-                renderContacts(
-                    elements.contactSearch.value.trim()
-                );
-
-            }
-        );
-
-    }
-
-
-    /* Message form */
-    if (elements.messageForm) {
-
-        elements.messageForm.addEventListener(
-            "submit",
-            handleMessageSubmit
-        );
-
-    }
-
-
-    /* Enter key */
-    if (elements.messageInput) {
-
-        elements.messageInput.addEventListener(
-            "keydown",
-            function (event) {
-
-                if (
-                    event.key === "Enter" &&
-                    !event.shiftKey
-                ) {
-
-                    event.preventDefault();
-
-                    handleMessageSubmit(event);
-
-                }
-
-            }
-        );
-
-    }
-
-
-    /* Attach */
-    if (elements.attachBtn) {
-
-        elements.attachBtn.addEventListener(
-            "click",
-            function () {
-
-                if (elements.mediaInput) {
-                    elements.mediaInput.click();
-                }
-
-            }
-        );
-
-    }
-
-
-    /* Media */
-    if (elements.mediaInput) {
-
-        elements.mediaInput.addEventListener(
-            "change",
-            handleMediaUpload
-        );
-
-    }
-
-
-    /* Voice call */
-    if (elements.voiceCallBtn) {
-
-        elements.voiceCallBtn.addEventListener(
-            "click",
-            startVoiceCall
-        );
-
-    }
-
-
-    /* End call */
-    if (elements.endCallBtn) {
-
-        elements.endCallBtn.addEventListener(
-            "click",
-            endCurrentCall
-        );
-
-    }
-
-
-    /* Accept call */
-    if (elements.acceptCallBtn) {
-
-        elements.acceptCallBtn.addEventListener(
-            "click",
-            acceptIncomingCall
-        );
-
-    }
-
-
-    /* Reject call */
-    if (elements.rejectCallBtn) {
-
-        elements.rejectCallBtn.addEventListener(
-            "click",
-            rejectIncomingCall
-        );
-
-    }
-
-
-    /* Notification */
-    if (elements.notificationBtn) {
-
-        elements.notificationBtn.addEventListener(
-            "click",
-            async function () {
-
-                openModal("notificationModal");
-
-                await loadNotifications();
-
-            }
-        );
-
-    }
-
-
-    /* Chat menu */
-    if (elements.chatMenuBtn) {
-
-        elements.chatMenuBtn.addEventListener(
-            "click",
-            function (event) {
-
-                event.stopPropagation();
-
-                if (!elements.contactMenu) {
-                    return;
-                }
-
-                elements.contactMenu.classList.toggle(
-                    "hidden"
-                );
-
-            }
-        );
-
-    }
-
-
-    /* Delete contact */
-    if (elements.deleteContactBtn) {
-
-        elements.deleteContactBtn.addEventListener(
-            "click",
-            handleDeleteContact
-        );
-
-    }
-
-
-    /* Modal close buttons */
-    document
-        .querySelectorAll("[data-close-modal]")
-        .forEach(function (button) {
-
-            button.addEventListener(
-                "click",
-                function () {
-
-                    const modalId =
-                        button.dataset.closeModal;
-
-                    closeModal(modalId);
-
-                }
-            );
-
+    on(elements.addContactBtn, "click", function () {
+        openModal("addContactModal");
+        if (elements.contactUsernameInput) {
+            elements.contactUsernameInput.focus();
+        }
+    });
+
+    on(elements.addContactForm, "submit", handleAddContact);
+
+    on(elements.contactSearch, "input", function () {
+        renderContacts(elements.contactSearch.value.trim());
+    });
+
+    on(elements.messageForm, "submit", handleMessageSubmit);
+
+    on(elements.messageInput, "keydown", function (event) {
+        if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            handleMessageSubmit(event);
+        }
+    });
+
+    on(elements.messageInput, "input", autoResizeMessageInput);
+
+    on(elements.attachBtn, "click", function () {
+        if (elements.mediaInput) elements.mediaInput.click();
+    });
+
+    on(elements.mediaInput, "change", handleMediaUpload);
+
+    on(elements.voiceCallBtn, "click", startVoiceCall);
+    on(elements.endCallBtn, "click", endCurrentCall);
+    on(elements.acceptCallBtn, "click", acceptIncomingCall);
+    on(elements.rejectCallBtn, "click", rejectIncomingCall);
+
+    on(elements.enableAudioBtn, "click", function () {
+        if (elements.remoteAudio) {
+            elements.remoteAudio.play().then(function () {
+                elements.enableAudioBtn.classList.add("hidden");
+            }).catch(function (error) {
+                console.warn("Audio still blocked:", error);
+            });
+        }
+    });
+
+    on(elements.notificationBtn, "click", async function () {
+        openModal("notificationModal");
+        await loadNotifications();
+    });
+
+    on(elements.chatMenuBtn, "click", function (event) {
+        event.stopPropagation();
+        if (elements.contactMenu) {
+            elements.contactMenu.classList.toggle("hidden");
+        }
+    });
+
+    on(elements.deleteContactBtn, "click", handleDeleteContact);
+
+    document.querySelectorAll("[data-close-modal]").forEach(function (button) {
+        button.addEventListener("click", function () {
+            closeModal(button.dataset.closeModal);
         });
+    });
 
-
-    /* Click outside modal */
-    document
-        .querySelectorAll(".modal-overlay")
-        .forEach(function (modal) {
-
-            modal.addEventListener(
-                "click",
-                function (event) {
-
-                    if (
-                        event.target === modal
-                    ) {
-
-                        modal.classList.add(
-                            "hidden"
-                        );
-
-                    }
-
-                }
-            );
-
+    document.querySelectorAll(".modal-overlay").forEach(function (modal) {
+        modal.addEventListener("click", function (event) {
+            if (event.target === modal) {
+                modal.classList.add("hidden");
+            }
         });
+    });
 
-
-    /* Close menu when clicking elsewhere */
-    document.addEventListener(
-        "click",
-        function () {
-
-            if (elements.contactMenu) {
-
-                elements.contactMenu.classList.add(
-                    "hidden"
-                );
-
-            }
-
+    document.addEventListener("click", function () {
+        if (elements.contactMenu) {
+            elements.contactMenu.classList.add("hidden");
         }
-    );
+    });
 
+    on(elements.contactMenu, "click", function (event) {
+        event.stopPropagation();
+    });
 
-    /* Prevent menu itself from closing */
-    if (elements.contactMenu) {
-
-        elements.contactMenu.addEventListener(
-            "click",
-            function (event) {
-
-                event.stopPropagation();
-
+    document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "visible") {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                connectWebSocket();
             }
-        );
-
-    }
-
-
-    /* Page visibility */
-    document.addEventListener(
-        "visibilitychange",
-        function () {
-
-            if (
-                document.visibilityState ===
-                "visible"
-            ) {
-
-                if (
-                    !socket ||
-                    socket.readyState !==
-                    WebSocket.OPEN
-                ) {
-
-                    connectWebSocket();
-
-                }
-
-                if (selectedUserId) {
-
-                    loadPresence(
-                        selectedUserId
-                    );
-
-                }
-
+            if (selectedUserId) {
+                loadPresence(selectedUserId);
             }
-
         }
-    );
+    });
 
+    window.addEventListener("beforeunload", function () {
+        isUnloading = true;
+        stopPresencePolling();
 
-    /* Before leaving page */
-    window.addEventListener(
-        "beforeunload",
-        function () {
-
-            stopPresencePolling();
-
-            if (socket) {
-
-                try {
-                    socket.close();
-                } catch (error) {
-                    console.warn(error);
-                }
-
+        if (socket) {
+            try {
+                socket.close();
+            } catch (error) {
+                console.warn(error);
             }
-
-            cleanupCall(false);
-
         }
-    );
 
+        cleanupCall();
+    });
 }
 
 
 /* =========================================================
-   8. CSRF
+   6. CSRF + API HELPER
    ========================================================= */
 
 function getCSRFToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
 
-    const meta =
-        document.querySelector(
-            'meta[name="csrf-token"]'
-        );
-
-    if (
-        meta &&
-        meta.getAttribute("content")
-    ) {
-
+    if (meta && meta.getAttribute("content")) {
         return meta.getAttribute("content");
-
     }
 
-
-    const cookies =
-        document.cookie.split(";");
-
+    const cookies = document.cookie.split(";");
 
     for (let cookie of cookies) {
-
         cookie = cookie.trim();
-
-        if (
-            cookie.startsWith(
-                "csrftoken="
-            )
-        ) {
-
-            return decodeURIComponent(
-                cookie.substring(
-                    "csrftoken=".length
-                )
-            );
-
+        if (cookie.startsWith("csrftoken=")) {
+            return decodeURIComponent(cookie.substring("csrftoken=".length));
         }
-
     }
 
     return "";
-
 }
 
+async function apiRequest(url, options = {}) {
 
-/* =========================================================
-   9. API REQUEST HELPER
-   ========================================================= */
+    const headers = options.headers || {};
 
-async function apiRequest(
-    url,
-    options = {}
-) {
-
-    const headers =
-        options.headers || {};
-
-    const csrfToken =
-        getCSRFToken();
-
-
-    if (
-        options.method &&
-        options.method.toUpperCase() !== "GET"
-    ) {
-
-        headers["X-CSRFToken"] =
-            csrfToken;
-
+    if (options.method && options.method.toUpperCase() !== "GET") {
+        headers["X-CSRFToken"] = getCSRFToken();
     }
 
-
-    headers["X-Requested-With"] =
-        "XMLHttpRequest";
-
+    headers["X-Requested-With"] = "XMLHttpRequest";
 
     const finalOptions = {
         credentials: "same-origin",
@@ -639,84 +278,40 @@ async function apiRequest(
         headers: headers
     };
 
-
     let response;
 
     try {
-
-        response =
-            await fetch(
-                url,
-                finalOptions
-            );
-
+        response = await fetch(url, finalOptions);
     } catch (error) {
-
-        console.error(
-            "Network error:",
-            error
-        );
-
+        console.error("Network error:", error);
         throw error;
-
     }
 
-
-    const contentType =
-        response.headers.get(
-            "content-type"
-        ) || "";
-
-
+    const contentType = response.headers.get("content-type") || "";
     let data;
 
-
-    if (
-        contentType.includes(
-            "application/json"
-        )
-    ) {
-
+    if (contentType.includes("application/json")) {
         data = await response.json();
-
     } else {
-
-        const text =
-            await response.text();
-
-        data = {
-            success: response.ok,
-            message: text
-        };
-
+        const text = await response.text();
+        data = { success: response.ok, message: text };
     }
-
 
     if (!response.ok) {
-
-        const error =
-            new Error(
-                data.message ||
-                `Request failed: ${response.status}`
-            );
-
-        error.status =
-            response.status;
-
+        const error = new Error(
+            data.message || `Request failed: ${response.status}`
+        );
+        error.status = response.status;
         error.data = data;
-
         throw error;
-
     }
 
-
     return data;
-
 }
 
 
 /* =========================================================
-   10. CONTACTS
+   7. CONTACTS
    ========================================================= */
 
 async function loadContacts() {
@@ -724,4972 +319,1808 @@ async function loadContacts() {
     showContactLoading(true);
 
     try {
+        const data = await apiRequest(CONFIG.contactsUrl, { method: "GET" });
 
-        const data =
-            await apiRequest(
-                CONFIG.contactsUrl,
-                {
-                    method: "GET"
-                }
+        if (!data || !Array.isArray(data.contacts)) {
+            contacts = [];
+        } else {
+            const oldMap = new Map(
+                contacts.map(function (c) { return [Number(c.id), c]; })
             );
 
+            contacts = data.contacts.map(function (contact) {
+                const old = oldMap.get(Number(contact.id));
 
-        if (
-            !data ||
-            !Array.isArray(data.contacts)
-        ) {
-
-            contacts = [];
-
-        } else {
-
-            const oldMap =
-                new Map(
-                    contacts.map(
-                        contact => [
-                            Number(contact.id),
-                            contact
-                        ]
-                    )
-                );
-
-
-            contacts =
-                data.contacts.map(
-                    function (contact) {
-
-                        const old =
-                            oldMap.get(
-                                Number(contact.id)
-                            );
-
-                        return {
-                            ...contact,
-                            last_message:
-                                old?.last_message ||
-                                "",
-                            last_time:
-                                old?.last_time ||
-                                "",
-                            is_online:
-                                old?.is_online ||
-                                false
-                        };
-
-                    }
-                );
-
+                return {
+                    ...contact,
+                    last_message: old?.last_message || contact.last_message || "",
+                    last_time: old?.last_time || contact.last_time || "",
+                    is_online: old?.is_online || false
+                };
+            });
         }
 
-
         rebuildContactMap();
-
         renderContacts();
 
     } catch (error) {
-
-        console.error(
-            "Load contacts error:",
-            error
-        );
-
-        renderContactError(
-            "Unable to load contacts."
-        );
-
+        console.error("Load contacts error:", error);
+        renderContactError("Unable to load contacts.");
     } finally {
-
         showContactLoading(false);
-
     }
-
 }
-
 
 function rebuildContactMap() {
-
     contactMap.clear();
-
-    contacts.forEach(
-        function (contact) {
-
-            contactMap.set(
-                Number(contact.id),
-                contact
-            );
-
-        }
-    );
-
+    contacts.forEach(function (contact) {
+        contactMap.set(Number(contact.id), contact);
+    });
 }
 
+function getContactDisplayName(contact) {
+    if (!contact) return "Unknown";
 
-/* =========================================================
-   11. RENDER CONTACTS
-   ========================================================= */
-
-function renderContacts(
-    searchText = ""
-) {
-
-    if (!elements.contactList) {
-        return;
+    if (contact.nickname && contact.nickname.trim()) {
+        return contact.nickname;
     }
 
+    const fullName = [contact.first_name, contact.last_name]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
 
-    const query =
-        searchText.toLowerCase();
+    return fullName || contact.username || "Unknown";
+}
 
+function getInitials(name) {
+    if (!name) return "?";
 
-    const filtered =
-        contacts.filter(
-            function (contact) {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
 
-                if (!query) {
-                    return true;
-                }
+    if (parts.length === 0) return "?";
 
-                const username =
-                    (
-                        contact.username ||
-                        ""
-                    ).toLowerCase();
+    if (parts.length === 1) {
+        return parts[0].substring(0, 2).toUpperCase();
+    }
 
-                const firstName =
-                    (
-                        contact.first_name ||
-                        ""
-                    ).toLowerCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
-                const lastName =
-                    (
-                        contact.last_name ||
-                        ""
-                    ).toLowerCase();
+function normalizeContact(raw) {
+    if (!raw) return null;
 
-                const nickname =
-                    (
-                        contact.nickname ||
-                        ""
-                    ).toLowerCase();
+    return {
+        id: Number(raw.id),
+        username: raw.username || "",
+        first_name: raw.first_name || "",
+        last_name: raw.last_name || "",
+        nickname: raw.nickname || "",
+        unread_count: Number(raw.unread_count || 0),
+        last_message: raw.last_message || "",
+        last_time: raw.last_time || "",
+        is_online: Boolean(raw.is_online)
+    };
+}
 
+function renderContacts(searchText) {
 
-                return (
-                    username.includes(query) ||
-                    firstName.includes(query) ||
-                    lastName.includes(query) ||
-                    nickname.includes(query)
-                );
+    if (!elements.contactList) return;
 
-            }
-        );
+    if (searchText === undefined) {
+        searchText = elements.contactSearch
+            ? elements.contactSearch.value.trim()
+            : "";
+    }
 
+    const query = searchText.toLowerCase();
+
+    const filtered = contacts.filter(function (contact) {
+        if (!query) return true;
+
+        return [
+            contact.username,
+            contact.first_name,
+            contact.last_name,
+            contact.nickname
+        ].some(function (value) {
+            return (value || "").toLowerCase().includes(query);
+        });
+    });
 
     elements.contactList.innerHTML = "";
 
-
     if (filtered.length === 0) {
-
-        const empty =
-            document.createElement(
-                "div"
-            );
-
-        empty.className =
-            "contact-empty";
-
-        empty.textContent =
-            query
-                ? "No contacts found"
-                : "No contacts yet";
-
         elements.contactList.appendChild(
-            empty
+            createEl(
+                "div",
+                "contact-empty",
+                query ? "No contacts found" : "No contacts yet"
+            )
         );
-
         return;
     }
 
+    filtered.forEach(function (contact) {
 
-    filtered.forEach(
-        function (contact) {
+        const item = createEl("div", "contact-item");
 
-            const item =
-                document.createElement(
-                    "div"
-                );
-
-            item.className =
-                "contact-item";
-
-
-            if (
-                Number(contact.id) ===
-                Number(selectedUserId)
-            ) {
-
-                item.classList.add(
-                    "active"
-                );
-
-            }
-
-
-            const avatar =
-                document.createElement(
-                    "div"
-                );
-
-            avatar.className =
-                "contact-avatar";
-
-
-            avatar.textContent =
-                getInitials(
-                    getContactDisplayName(
-                        contact
-                    )
-                );
-
-
-            const onlineDot =
-                document.createElement(
-                    "span"
-                );
-
-            onlineDot.className =
-                "contact-online-dot";
-
-
-            if (
-                contact.is_online
-            ) {
-
-                onlineDot.classList.add(
-                    "online"
-                );
-
-            }
-
-
-            avatar.appendChild(
-                onlineDot
-            );
-
-
-            const content =
-                document.createElement(
-                    "div"
-                );
-
-            content.className =
-                "contact-content";
-
-
-            const top =
-                document.createElement(
-                    "div"
-                );
-
-            top.className =
-                "contact-top";
-
-
-            const name =
-                document.createElement(
-                    "div"
-                );
-
-            name.className =
-                "contact-name";
-
-            name.textContent =
-                getContactDisplayName(
-                    contact
-                );
-
-
-            const time =
-                document.createElement(
-                    "div"
-                );
-
-            time.className =
-                "contact-time";
-
-            time.textContent =
-                contact.last_time || "";
-
-
-            top.appendChild(name);
-            top.appendChild(time);
-
-
-            const bottom =
-                document.createElement(
-                    "div"
-                );
-
-            bottom.className =
-                "contact-bottom";
-
-
-            const preview =
-                document.createElement(
-                    "div"
-                );
-
-            preview.className =
-                "contact-preview";
-
-            preview.textContent =
-                contact.last_message ||
-                contact.username ||
-                "";
-
-
-            bottom.appendChild(
-                preview
-            );
-
-
-            const unread =
-                Number(
-                    contact.unread_count || 0
-                );
-
-
-            if (unread > 0) {
-
-                const badge =
-                    document.createElement(
-                        "span"
-                    );
-
-                badge.className =
-                    "unread-count";
-
-                badge.textContent =
-                    unread > 99
-                        ? "99+"
-                        : String(unread);
-
-                bottom.appendChild(
-                    badge
-                );
-
-            }
-
-
-            content.appendChild(top);
-            content.appendChild(bottom);
-
-
-            item.appendChild(avatar);
-            item.appendChild(content);
-
-
-            item.addEventListener(
-                "click",
-                function () {
-
-                    openChat(
-                        contact
-                    );
-
-                }
-            );
-
-
-            elements.contactList.appendChild(
-                item
-            );
-
+        if (Number(contact.id) === Number(selectedUserId)) {
+            item.classList.add("active");
         }
-    );
 
+        const displayName = getContactDisplayName(contact);
+
+        const avatar = createEl("div", "contact-avatar", getInitials(displayName));
+        const dot = createEl("span", "contact-online-dot");
+        if (contact.is_online) dot.classList.add("online");
+        avatar.appendChild(dot);
+
+        const content = createEl("div", "contact-content");
+
+        const top = createEl("div", "contact-top");
+        top.appendChild(createEl("div", "contact-name", displayName));
+        top.appendChild(createEl("div", "contact-time", contact.last_time || ""));
+
+        const bottom = createEl("div", "contact-bottom");
+        bottom.appendChild(
+            createEl(
+                "div",
+                "contact-preview",
+                contact.last_message || contact.username || ""
+            )
+        );
+
+        const unread = Number(contact.unread_count || 0);
+
+        if (unread > 0) {
+            bottom.appendChild(
+                createEl(
+                    "span",
+                    "unread-count",
+                    unread > 99 ? "99+" : String(unread)
+                )
+            );
+        }
+
+        content.appendChild(top);
+        content.appendChild(bottom);
+
+        item.appendChild(avatar);
+        item.appendChild(content);
+
+        item.addEventListener("click", function () {
+            openChat(contact);
+        });
+
+        elements.contactList.appendChild(item);
+    });
+}
+
+function renderContactError(text) {
+    if (!elements.contactList) return;
+    elements.contactList.innerHTML = "";
+    elements.contactList.appendChild(createEl("div", "contact-empty error", text));
+}
+
+function showContactLoading(show) {
+    if (elements.contactLoading) {
+        elements.contactLoading.classList.toggle("hidden", !show);
+    }
+}
+
+function updateContactPreview(userId, text, time) {
+    const contact = contactMap.get(Number(userId));
+    if (!contact) return;
+
+    contact.last_message = text || "";
+    contact.last_time = time || formatMessageTime(new Date());
+
+    renderContacts();
+}
+
+function increaseUnreadCount(userId) {
+    const contact = contactMap.get(Number(userId));
+    if (!contact) return;
+
+    contact.unread_count = Number(contact.unread_count || 0) + 1;
+    renderContacts();
 }
 
 
 /* =========================================================
-   12. CONTACT HELPERS
+   8. ADD / DELETE CONTACT
    ========================================================= */
 
-function getContactDisplayName(
-    contact
-) {
-
-    if (!contact) {
-        return "Unknown";
-    }
-
-
-    if (
-        contact.nickname &&
-        contact.nickname.trim()
-    ) {
-
-        return contact.nickname;
-
-    }
-
-
-    const fullName =
-        [
-            contact.first_name,
-            contact.last_name
-        ]
-            .filter(Boolean)
-            .join(" ")
-            .trim();
-
-
-    return (
-        fullName ||
-        contact.username ||
-        "Unknown"
-    );
-
-}
-
-
-function getInitials(name) {
-
-    if (!name) {
-        return "?";
-    }
-
-
-    const parts =
-        name
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean);
-
-
-    if (parts.length === 1) {
-
-        return parts[0]
-            .substring(0, 2)
-            .toUpperCase();
-
-    }
-
-
-    return (
-        parts[0][0] +
-        parts[parts.length - 1][0]
-    ).toUpperCase();
-
-}
-
-
-/* =========================================================
-   13. ADD CONTACT
-   ========================================================= */
-
-async function handleAddContact(
-    event
-) {
-
+async function handleAddContact(event) {
     event.preventDefault();
 
-
-    const username =
-        elements.contactUsernameInput
-            ? elements.contactUsernameInput.value.trim()
-            : "";
-
+    const username = elements.contactUsernameInput
+        ? elements.contactUsernameInput.value.trim()
+        : "";
 
     if (!username) {
-
-        showContactMessage(
-            "Please enter a username.",
-            "error"
-        );
-
+        showContactMessage("Please enter a username.", "error");
         return;
-
     }
 
-
-    setButtonLoading(
-        elements.addContactSubmitBtn,
-        true
-    );
-
+    setButtonLoading(elements.addContactSubmitBtn, true);
 
     try {
-
-        const data =
-            await apiRequest(
-                CONFIG.addContactUrl,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-                    body: JSON.stringify({
-                        username: username
-                    })
-                }
-            );
-
+        const data = await apiRequest(CONFIG.addContactUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: username })
+        });
 
         if (!data.success) {
-
-            throw new Error(
-                data.message ||
-                "Unable to add contact."
-            );
-
+            throw new Error(data.message || "Unable to add contact.");
         }
 
+        showContactMessage(data.message || "Contact added successfully.", "success");
 
-        showContactMessage(
-            data.message ||
-            "Contact added successfully.",
-            "success"
-        );
-
-
-        if (
-            elements.contactUsernameInput
-        ) {
-
-            elements.contactUsernameInput.value =
-                "";
-
+        if (elements.contactUsernameInput) {
+            elements.contactUsernameInput.value = "";
         }
-
 
         await loadContacts();
 
-
-        if (
-            data.contact
-        ) {
-
-            const contact =
-                normalizeContact(
-                    data.contact
-                );
-
-            await openChat(
-                contact
-            );
-
+        if (data.contact) {
+            await openChat(normalizeContact(data.contact));
         }
 
-
-        setTimeout(
-            function () {
-
-                closeModal(
-                    "addContactModal"
-                );
-
-            },
-            700
-        );
-
+        setTimeout(function () {
+            closeModal("addContactModal");
+        }, 700);
 
     } catch (error) {
-
-        console.error(
-            "Add contact error:",
-            error
-        );
-
-        showContactMessage(
-            error.message ||
-            "Unable to add contact.",
-            "error"
-        );
-
+        console.error("Add contact error:", error);
+        showContactMessage(error.message || "Unable to add contact.", "error");
     } finally {
-
-        setButtonLoading(
-            elements.addContactSubmitBtn,
-            false
-        );
-
+        setButtonLoading(elements.addContactSubmitBtn, false);
     }
-
 }
-
-
-/* =========================================================
-   14. DELETE CONTACT
-   ========================================================= */
 
 async function handleDeleteContact() {
 
     if (!selectedUserId) {
-
-        showToast(
-            "Select a contact first.",
-            "error"
-        );
-
-        return;
-
-    }
-
-
-    const contact =
-        contactMap.get(
-            Number(selectedUserId)
-        );
-
-
-    const name =
-        getContactDisplayName(
-            contact
-        );
-
-
-    const confirmed =
-        window.confirm(
-            `Delete ${name} from your contacts?`
-        );
-
-
-    if (!confirmed) {
+        showToast("Select a contact first.", "error");
         return;
     }
 
+    const contact = contactMap.get(Number(selectedUserId));
+    const name = getContactDisplayName(contact);
+
+    if (!window.confirm(`Delete ${name} from your contacts?`)) {
+        return;
+    }
 
     try {
-
-        const data =
-            await apiRequest(
-                CONFIG.deleteContactUrl,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-                    body: JSON.stringify({
-                        user_id:
-                            Number(
-                                selectedUserId
-                            )
-                    })
-                }
-            );
-
+        const data = await apiRequest(CONFIG.deleteContactUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: Number(selectedUserId) })
+        });
 
         if (!data.success) {
-
-            throw new Error(
-                data.message ||
-                "Unable to delete contact."
-            );
-
+            throw new Error(data.message || "Unable to delete contact.");
         }
 
-
-        contacts =
-            contacts.filter(
-                function (item) {
-
-                    return Number(item.id) !==
-                        Number(selectedUserId);
-
-                }
-            );
-
+        contacts = contacts.filter(function (item) {
+            return Number(item.id) !== Number(selectedUserId);
+        });
 
         rebuildContactMap();
-
         renderContacts();
-
 
         selectedUserId = null;
         selectedContact = null;
 
-
-        if (elements.chatInterface) {
-
-            elements.chatInterface.classList.add(
-                "hidden"
-            );
-
-        }
-
-
-        if (elements.emptyChat) {
-
-            elements.emptyChat.classList.remove(
-                "hidden"
-            );
-
-        }
-
+        if (elements.chatInterface) elements.chatInterface.classList.add("hidden");
+        if (elements.emptyChat) elements.emptyChat.classList.remove("hidden");
 
         stopPresencePolling();
-
-        showToast(
-            "Contact deleted.",
-            "success"
-        );
-
+        showToast("Contact deleted.", "success");
 
     } catch (error) {
-
-        console.error(
-            "Delete contact error:",
-            error
-        );
-
-        showToast(
-            error.message ||
-            "Unable to delete contact.",
-            "error"
-        );
-
+        console.error("Delete contact error:", error);
+        showToast(error.message || "Unable to delete contact.", "error");
     }
-
 }
 
 
 /* =========================================================
-   15. OPEN CHAT
+   9. OPEN CHAT
    ========================================================= */
 
-async function openChat(
-    contact
-) {
+async function openChat(contact) {
 
-    if (!contact) {
-        return;
-    }
+    if (!contact) return;
 
+    selectedUserId = Number(contact.id);
+    selectedContact = contact;
 
-    selectedUserId =
-        Number(contact.id);
-
-    selectedContact =
-        contact;
-
-
-    const existing =
-        contactMap.get(
-            selectedUserId
-        );
-
+    const existing = contactMap.get(selectedUserId);
 
     if (existing) {
-
-        selectedContact =
-            {
-                ...existing,
-                ...contact
-            };
-
+        selectedContact = { ...existing, ...contact };
     }
-
-
-    renderContacts(
-        elements.contactSearch
-            ? elements.contactSearch.value.trim()
-            : ""
-    );
-
-
-    /* Hide empty screen */
-    if (elements.emptyChat) {
-
-        elements.emptyChat.classList.add(
-            "hidden"
-        );
-
-    }
-
-
-    /* Show chat */
-    if (elements.chatInterface) {
-
-        elements.chatInterface.classList.remove(
-            "hidden"
-        );
-
-    }
-
-
-    updateChatHeader();
-
-
-    clearMessages();
-
-
-    await loadMessages(
-        selectedUserId
-    );
-
-
-    await markCurrentChatRead();
-
-
-    await loadPresence(
-        selectedUserId
-    );
-
-
-    startPresencePolling();
-
-}
-
-
-/* =========================================================
-   16. CHAT HEADER
-   ========================================================= */
-
-function updateChatHeader() {
-
-    const name =
-        getContactDisplayName(
-            selectedContact
-        );
-
-
-    if (elements.chatUsername) {
-
-        elements.chatUsername.textContent =
-            name;
-
-    }
-
-
-    if (elements.chatAvatar) {
-
-        elements.chatAvatar.textContent =
-            getInitials(name);
-
-    }
-
-
-    if (elements.chatStatus) {
-
-        elements.chatStatus.textContent =
-            "Loading...";
-
-    }
-
-}
-
-
-/* =========================================================
-   17. LOAD MESSAGES
-   ========================================================= */
-
-async function loadMessages(
-    userId
-) {
-
-    if (!userId) {
-        return;
-    }
-
-
-    showMessageLoading(true);
-
-
-    try {
-
-        const url =
-            `${CONFIG.messagesUrl}${userId}/`;
-
-
-        const data =
-            await apiRequest(
-                url,
-                {
-                    method: "GET"
-                }
-            );
-
-
-        if (
-            !data ||
-            !Array.isArray(data.messages)
-        ) {
-
-            renderEmptyMessages();
-
-            return;
-
-        }
-
-
-        clearMessages();
-
-
-        if (
-            data.messages.length === 0
-        ) {
-
-            renderEmptyMessages();
-
-            return;
-
-        }
-
-
-        data.messages.forEach(
-            function (message) {
-
-                addOrUpdateMessage(
-                    message,
-                    false
-                );
-
-            }
-        );
-
-
-        scrollMessagesToBottom();
-
-
-    } catch (error) {
-
-        console.error(
-            "Load messages error:",
-            error
-        );
-
-        clearMessages();
-
-        renderEmptyMessages(
-            "Unable to load messages."
-        );
-
-    } finally {
-
-        showMessageLoading(false);
-
-    }
-
-}
-
-
-/* =========================================================
-   18. MESSAGE NORMALIZER
-   ========================================================= */
-
-function normalizeMessage(
-    raw
-) {
-
-    if (!raw) {
-        return null;
-    }
-
-
-    const source =
-        raw.message &&
-        typeof raw.message === "object"
-            ? {
-                ...raw,
-                ...raw.message
-            }
-            : raw;
-
-
-    const senderId =
-        Number(
-            source.sender_id ||
-            source.senderId ||
-            0
-        );
-
-
-    const receiverId =
-        Number(
-            source.receiver_id ||
-            source.receiverId ||
-            0
-        );
-
-
-    const content =
-        source.content ??
-        source.message ??
-        "";
-
-
-    const messageType =
-        (
-            source.message_type ||
-            source.media_type ||
-            "text"
-        ).toLowerCase();
-
-
-    const mediaUrl =
-        source.media_url ||
-        source.mediaUrl ||
-        null;
-
-
-    return {
-
-        id:
-            source.id
-                ? Number(source.id)
-                : null,
-
-        sender_id:
-            senderId,
-
-        receiver_id:
-            receiverId,
-
-        sender:
-            source.sender || "",
-
-        receiver:
-            source.receiver || "",
-
-        content:
-            content || "",
-
-        message:
-            content || "",
-
-        message_type:
-            messageType,
-
-        media_url:
-            mediaUrl,
-
-        media_type:
-            source.media_type ||
-            null,
-
-        is_delivered:
-            Boolean(
-                source.is_delivered
-            ),
-
-        is_read:
-            Boolean(
-                source.is_read
-            ),
-
-        created_at:
-            source.created_at ||
-            "",
-
-        time:
-            source.time ||
-            formatMessageTime(
-                source.created_at
-            )
-
-    };
-
-}
-
-
-/* =========================================================
-   19. ADD / UPDATE MESSAGE
-   ========================================================= */
-
-function addOrUpdateMessage(
-    rawMessage,
-    scroll = true
-) {
-
-    const message =
-        normalizeMessage(
-            rawMessage
-        );
-
-
-    if (!message) {
-        return;
-    }
-
-
-    /*
-     * Only display messages belonging
-     * to current conversation.
-     */
-
-    if (
-        selectedUserId &&
-        message.sender_id !==
-            Number(selectedUserId) &&
-        message.receiver_id !==
-            Number(selectedUserId)
-    ) {
-
-        return;
-
-    }
-
-
-    /*
-     * If this message already exists,
-     * update its status instead of
-     * creating a duplicate.
-     */
-
-    if (
-        message.id &&
-        messageElements.has(
-            message.id
-        )
-    ) {
-
-        updateMessageElement(
-            message
-        );
-
-        return;
-
-    }
-
-
-    clearEmptyMessageState();
-
-
-    const element =
-        createMessageElement(
-            message
-        );
-
-
-    if (!element) {
-        return;
-    }
-
-
-    if (
-        message.id
-    ) {
-
-        messageElements.set(
-            message.id,
-            element
-        );
-
-    }
-
-
-    if (
-        elements.messageContainer
-    ) {
-
-        elements.messageContainer.appendChild(
-            element
-        );
-
-    }
-
-
-    updateContactPreview(
-        message.sender_id === CURRENT_USER_ID
-            ? message.receiver_id
-            : message.sender_id,
-        message.content ||
-        (
-            message.message_type ===
-            "image"
-                ? "📷 Image"
-                : message.message_type ===
-                  "video"
-                    ? "🎥 Video"
-                    : ""
-        ),
-        message.time
-    );
-
-
-    if (scroll) {
-
-        scrollMessagesToBottom();
-
-    }
-
-}
-
-
-/* =========================================================
-   20. CREATE MESSAGE ELEMENT
-   ========================================================= */
-
-function createMessageElement(
-    message
-) {
-
-    const isSent =
-        Number(message.sender_id) ===
-        Number(CURRENT_USER_ID);
-
-
-    const row =
-        document.createElement(
-            "div"
-        );
-
-    row.className =
-        `message-row ${
-            isSent
-                ? "sent"
-                : "received"
-        }`;
-
-
-    if (message.id) {
-
-        row.dataset.messageId =
-            message.id;
-
-    }
-
-
-    const bubble =
-        document.createElement(
-            "div"
-        );
-
-    bubble.className =
-        `message ${
-            isSent
-                ? "sent"
-                : "received"
-        }`;
-
-
-    /* Media */
-    if (
-        message.media_url &&
-        (
-            message.message_type ===
-            "image" ||
-            message.media_type ===
-            "image"
-        )
-    ) {
-
-        const image =
-            document.createElement(
-                "img"
-            );
-
-        image.className =
-            "message-image";
-
-        image.src =
-            message.media_url;
-
-        image.alt =
-            "Image";
-
-        image.loading =
-            "lazy";
-
-
-        image.addEventListener(
-            "click",
-            function () {
-
-                window.open(
-                    message.media_url,
-                    "_blank"
-                );
-
-            }
-        );
-
-
-        bubble.appendChild(
-            image
-        );
-
-    }
-
-
-    /* Video */
-    else if (
-        message.media_url &&
-        (
-            message.message_type ===
-            "video" ||
-            message.media_type ===
-            "video"
-        )
-    ) {
-
-        const video =
-            document.createElement(
-                "video"
-            );
-
-        video.className =
-            "message-video";
-
-        video.src =
-            message.media_url;
-
-        video.controls =
-            true;
-
-        video.preload =
-            "metadata";
-
-
-        bubble.appendChild(
-            video
-        );
-
-    }
-
-
-    /* Text */
-    if (
-        message.content &&
-        message.content.trim()
-    ) {
-
-        const text =
-            document.createElement(
-                "div"
-            );
-
-        text.className =
-            "message-text";
-
-        text.textContent =
-            message.content;
-
-
-        bubble.appendChild(
-            text
-        );
-
-    }
-
-
-    /* If media has no text */
-    if (
-        !bubble.children.length
-    ) {
-
-        const text =
-            document.createElement(
-                "div"
-            );
-
-        text.className =
-            "message-text";
-
-        text.textContent =
-            "(Media)";
-
-
-        bubble.appendChild(
-            text
-        );
-
-    }
-
-
-    /* Meta */
-    const meta =
-        document.createElement(
-            "div"
-        );
-
-    meta.className =
-        "message-meta";
-
-
-    const time =
-        document.createElement(
-            "span"
-        );
-
-    time.className =
-        "message-time";
-
-    time.textContent =
-        message.time ||
-        formatMessageTime(
-            message.created_at
-        );
-
-
-    meta.appendChild(
-        time
-    );
-
-
-    /* Status only for sent messages */
-    if (isSent) {
-
-        const status =
-            document.createElement(
-                "span"
-            );
-
-        status.className =
-            getStatusClass(
-                message
-            );
-
-        status.dataset.status =
-            "true";
-
-        status.textContent =
-            getStatusIcon(
-                message
-            );
-
-
-        meta.appendChild(
-            status
-        );
-
-    }
-
-
-    bubble.appendChild(
-        meta
-    );
-
-
-    row.appendChild(
-        bubble
-    );
-
-
-    return row;
-
-}
-
-
-/* =========================================================
-   21. MESSAGE STATUS
-   ========================================================= */
-
-function getStatusClass(
-    message
-) {
-
-    if (message.is_read) {
-
-        return "message-status read";
-
-    }
-
-
-    if (message.is_delivered) {
-
-        return "message-status delivered";
-
-    }
-
-
-    return "message-status sent";
-
-}
-
-
-function getStatusIcon(
-    message
-) {
-
-    if (message.is_read) {
-
-        return "✓✓";
-
-    }
-
-
-    if (message.is_delivered) {
-
-        return "✓✓";
-
-    }
-
-
-    return "✓";
-
-}
-
-
-/* =========================================================
-   22. UPDATE MESSAGE ELEMENT
-   ========================================================= */
-
-function updateMessageElement(
-    message
-) {
-
-    if (!message.id) {
-        return;
-    }
-
-
-    const element =
-        messageElements.get(
-            message.id
-        );
-
-
-    if (!element) {
-        return;
-    }
-
-
-    const status =
-        element.querySelector(
-            '[data-status="true"]'
-        );
-
-
-    if (!status) {
-        return;
-    }
-
-
-    status.className =
-        getStatusClass(
-            message
-        );
-
-
-    status.textContent =
-        getStatusIcon(
-            message
-        );
-
-}
-
-
-/* =========================================================
-   23. MARK READ
-   ========================================================= */
-
-async function markCurrentChatRead() {
-
-    if (!selectedUserId) {
-        return;
-    }
-
-
-    /*
-     * HTTP API
-     */
-    try {
-
-        await apiRequest(
-            CONFIG.markReadUrl,
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-                body: JSON.stringify({
-                    sender_id:
-                        Number(
-                            selectedUserId
-                        )
-                })
-            }
-        );
-
-    } catch (error) {
-
-        console.warn(
-            "HTTP mark read failed:",
-            error
-        );
-
-    }
-
-
-    /*
-     * WebSocket notification
-     */
-    sendSocketMessage({
-
-        type: "mark_read",
-
-        sender_id:
-            Number(selectedUserId)
-
-    });
-
-
-    /*
-     * Clear local unread count
-     */
-    const contact =
-        contactMap.get(
-            Number(selectedUserId)
-        );
-
-
-    if (contact) {
-
-        contact.unread_count =
-            0;
-
-    }
-
 
     renderContacts();
 
+    if (elements.emptyChat) elements.emptyChat.classList.add("hidden");
+    if (elements.chatInterface) elements.chatInterface.classList.remove("hidden");
+
+    updateChatHeader();
+    clearMessages();
+
+    await loadMessages(selectedUserId);
+    await markCurrentChatRead(true);
+    await loadPresence(selectedUserId);
+
+    startPresencePolling();
+
+    if (elements.messageInput) {
+        elements.messageInput.focus();
+    }
+}
+
+function updateChatHeader() {
+    const name = getContactDisplayName(selectedContact);
+
+    if (elements.chatUsername) elements.chatUsername.textContent = name;
+    if (elements.chatAvatar) elements.chatAvatar.textContent = getInitials(name);
+    if (elements.chatStatus) elements.chatStatus.textContent = "Loading...";
 }
 
 
 /* =========================================================
-   24. SEND TEXT MESSAGE
+   10. LOAD MESSAGES
    ========================================================= */
 
-async function handleMessageSubmit(
-    event
-) {
+async function loadMessages(userId) {
 
-    if (event) {
-        event.preventDefault();
-    }
+    if (!userId) return;
 
+    showMessageLoading(true);
 
-    if (isSendingMessage) {
-        return;
-    }
-
-
-    if (!selectedUserId) {
-
-        showToast(
-            "Select a contact first.",
-            "error"
+    try {
+        const data = await apiRequest(
+            `${CONFIG.messagesUrl}${userId}/`,
+            { method: "GET" }
         );
 
+        // The user may have opened another chat while we waited
+        if (Number(userId) !== Number(selectedUserId)) return;
+
+        clearMessages();
+
+        if (!data || !Array.isArray(data.messages) || data.messages.length === 0) {
+            renderEmptyMessages();
+            return;
+        }
+
+        data.messages.forEach(function (message) {
+            addOrUpdateMessage(message, false);
+        });
+
+        scrollMessagesToBottom();
+
+    } catch (error) {
+        console.error("Load messages error:", error);
+        clearMessages();
+        renderEmptyMessages("Unable to load messages.");
+    } finally {
+        showMessageLoading(false);
+    }
+}
+
+
+/* =========================================================
+   11. MESSAGE NORMALIZER  (MAIN FIX)
+   ========================================================= */
+
+/*
+ * Accepts all of these shapes:
+ *
+ * 1) WebSocket (flat):
+ *    { type, message_id, sender_id, receiver_id,
+ *      message: "hello", created_at, ... }
+ *
+ * 2) HTTP API (flat):
+ *    { id, sender_id, receiver_id, content: "hello", ... }
+ *
+ * 3) Wrapped:
+ *    { message: { id, sender_id, content, ... } }
+ */
+function normalizeMessage(raw) {
+
+    if (!raw || typeof raw !== "object") return null;
+
+    const source =
+        raw.message && typeof raw.message === "object"
+            ? { ...raw, ...raw.message }
+            : raw;
+
+    const rawId = source.id || source.message_id || null;
+
+    const content =
+        source.content !== undefined && source.content !== null
+            ? source.content
+            : typeof source.message === "string"
+                ? source.message
+                : "";
+
+    const mediaUrl = source.media_url || source.mediaUrl || null;
+
+    const messageType = String(
+        source.message_type || source.media_type || "text"
+    ).toLowerCase();
+
+    return {
+        id: rawId ? Number(rawId) : null,
+
+        sender_id: Number(source.sender_id || source.senderId || 0),
+        receiver_id: Number(source.receiver_id || source.receiverId || 0),
+
+        sender: source.sender || "",
+        receiver: source.receiver || "",
+
+        content: content || "",
+        message: content || "",
+
+        message_type: messageType,
+        media_url: mediaUrl,
+        media_type: source.media_type || null,
+
+        is_delivered: Boolean(source.is_delivered),
+        is_read: Boolean(source.is_read),
+
+        created_at: source.created_at || "",
+        time: formatMessageTime(source.created_at) || source.time || ""
+    };
+}
+
+function getPreviewText(message) {
+    if (message.content) return message.content;
+    if (message.message_type === "image") return "📷 Image";
+    if (message.message_type === "video") return "🎥 Video";
+    return "";
+}
+
+
+/* =========================================================
+   12. ADD / UPDATE MESSAGE
+   ========================================================= */
+
+function addOrUpdateMessage(rawMessage, live = true) {
+
+    const message = normalizeMessage(rawMessage);
+
+    if (!message) return;
+
+    // Only show messages that belong to the open conversation
+    if (
+        selectedUserId &&
+        message.sender_id !== Number(selectedUserId) &&
+        message.receiver_id !== Number(selectedUserId)
+    ) {
         return;
     }
 
-
-    const input =
-        elements.messageInput;
-
-
-    if (!input) {
+    // Already on screen: update ticks only (no duplicate)
+    if (message.id && messageElements.has(message.id)) {
+        updateMessageElement(message);
         return;
     }
 
+    clearEmptyMessageState();
 
-    const text =
-        input.value.trim();
+    const element = createMessageElement(message);
+
+    if (!element) return;
+
+    if (message.id) {
+        messageElements.set(message.id, element);
+    }
+
+    if (elements.messageContainer) {
+        elements.messageContainer.appendChild(element);
+    }
+
+    if (live) {
+        updateContactPreview(
+            message.sender_id === CURRENT_USER_ID
+                ? message.receiver_id
+                : message.sender_id,
+            getPreviewText(message),
+            message.time
+        );
+
+        scrollMessagesToBottom();
+    }
+}
+
+function createMessageElement(message) {
+
+    const isSent = Number(message.sender_id) === Number(CURRENT_USER_ID);
+    const side = isSent ? "sent" : "received";
+
+    const row = createEl("div", `message-row ${side}`);
+
+    if (message.id) {
+        row.dataset.messageId = message.id;
+    }
+
+    const bubble = createEl("div", `message ${side}`);
+
+    const isImage =
+        message.message_type === "image" || message.media_type === "image";
+    const isVideo =
+        message.message_type === "video" || message.media_type === "video";
+
+    if (message.media_url && isImage) {
+        const image = createEl("img", "message-image");
+        image.src = message.media_url;
+        image.alt = "Image";
+        image.loading = "lazy";
+        image.addEventListener("click", function () {
+            window.open(message.media_url, "_blank");
+        });
+        bubble.appendChild(image);
+
+    } else if (message.media_url && isVideo) {
+        const video = createEl("video", "message-video");
+        video.src = message.media_url;
+        video.controls = true;
+        video.preload = "metadata";
+        bubble.appendChild(video);
+    }
+
+    if (message.content && message.content.trim()) {
+        bubble.appendChild(createEl("div", "message-text", message.content));
+    }
+
+    if (!bubble.children.length) {
+        bubble.appendChild(createEl("div", "message-text", "(Media)"));
+    }
+
+    const meta = createEl("div", "message-meta");
+
+    meta.appendChild(
+        createEl(
+            "span",
+            "message-time",
+            message.time || formatMessageTime(message.created_at)
+        )
+    );
+
+    if (isSent) {
+        const status = createEl(
+            "span",
+            getStatusClass(message),
+            getStatusIcon(message)
+        );
+        status.dataset.status = "true";
+        meta.appendChild(status);
+    }
+
+    bubble.appendChild(meta);
+    row.appendChild(bubble);
+
+    return row;
+}
 
 
-    if (!text) {
+/* =========================================================
+   13. MESSAGE STATUS (ticks)
+   ========================================================= */
+
+function getStatusClass(message) {
+    if (message.is_read) return "message-status read";
+    if (message.is_delivered) return "message-status delivered";
+    return "message-status sent";
+}
+
+function getStatusIcon(message) {
+    if (message.is_read || message.is_delivered) return "✓✓";
+    return "✓";
+}
+
+function updateMessageElement(message) {
+
+    if (!message.id) return;
+
+    const element = messageElements.get(message.id);
+    if (!element) return;
+
+    const status = element.querySelector('[data-status="true"]');
+    if (!status) return;
+
+    status.className = getStatusClass(message);
+    status.textContent = getStatusIcon(message);
+}
+
+function updateMessageStatus(messageId, status) {
+
+    if (!messageId) return;
+
+    const element = messageElements.get(Number(messageId));
+    if (!element) return;
+
+    const statusElement = element.querySelector('[data-status="true"]');
+    if (!statusElement) return;
+
+    if (status.is_read) {
+        statusElement.className = "message-status read";
+        statusElement.textContent = "✓✓";
+    } else if (status.is_delivered) {
+        // never downgrade a "read" tick
+        if (!statusElement.classList.contains("read")) {
+            statusElement.className = "message-status delivered";
+            statusElement.textContent = "✓✓";
+        }
+    }
+}
+
+function markCurrentSentMessagesRead() {
+    messageElements.forEach(function (element) {
+        const status = element.querySelector('[data-status="true"]');
+        if (!status) return;
+        status.className = "message-status read";
+        status.textContent = "✓✓";
+    });
+}
+
+
+/* =========================================================
+   14. MARK READ  (FIXED: FormData instead of JSON)
+   ========================================================= */
+
+async function markCurrentChatRead(viaHttp = true) {
+
+    if (!selectedUserId) return;
+
+    const senderId = Number(selectedUserId);
+
+    if (viaHttp && CONFIG.markReadUrl) {
+        try {
+            const formData = new FormData();
+            formData.append("sender_id", String(senderId));
+
+            await apiRequest(CONFIG.markReadUrl, {
+                method: "POST",
+                body: formData
+            });
+
+        } catch (error) {
+            console.warn("HTTP mark read failed:", error);
+        }
+    }
+
+    sendSocketMessage({
+        type: "mark_read",
+        sender_id: senderId
+    });
+
+    const contact = contactMap.get(senderId);
+
+    if (contact) {
+        contact.unread_count = 0;
+    }
+
+    renderContacts();
+}
+
+
+/* =========================================================
+   15. SEND TEXT MESSAGE
+   ========================================================= */
+
+async function handleMessageSubmit(event) {
+
+    if (event) event.preventDefault();
+
+    if (isSendingMessage) return;
+
+    if (!selectedUserId) {
+        showToast("Select a contact first.", "error");
         return;
     }
 
+    const input = elements.messageInput;
+    if (!input) return;
+
+    const text = input.value.trim();
+    if (!text) return;
 
     isSendingMessage = true;
 
-
     try {
 
-        /*
-         * Preferred:
-         * WebSocket
-         */
+        // Preferred: WebSocket.
+        // The server answers with "message_sent", which shows
+        // the message on the sender's screen at once.
+        const sent = sendSocketMessage({
+            type: "chat_message",
+            receiver_id: Number(selectedUserId),
+            message: text
+        });
 
-        if (
-            socket &&
-            socket.readyState ===
-            WebSocket.OPEN
-        ) {
-
-            const sent =
-                sendSocketMessage({
-
-                    type: "chat_message",
-
-                    receiver_id:
-                        Number(
-                            selectedUserId
-                        ),
-
-                    message:
-                        text
-
-                });
-
-
-            if (sent) {
-
-                input.value = "";
-
-                autoResizeMessageInput();
-
-                return;
-
-            }
-
+        if (sent) {
+            input.value = "";
+            autoResizeMessageInput();
+            return;
         }
 
+        // HTTP fallback (only when the WebSocket is not open)
+        const formData = new FormData();
+        formData.append("receiver_id", String(selectedUserId));
+        formData.append("message", text);
 
-        /*
-         * HTTP fallback
-         *
-         * This is used only when
-         * WebSocket is unavailable.
-         */
-
-        const formData =
-            new FormData();
-
-        formData.append(
-            "receiver_id",
-            String(
-                selectedUserId
-            )
-        );
-
-        formData.append(
-            "message",
-            text
-        );
-
-
-        const data =
-            await apiRequest(
-                CONFIG.sendMessageUrl,
-                {
-                    method: "POST",
-                    body: formData
-                }
-            );
-
+        const data = await apiRequest(CONFIG.sendMessageUrl, {
+            method: "POST",
+            body: formData
+        });
 
         if (!data.success) {
-
-            throw new Error(
-                data.message ||
-                "Message could not be sent."
-            );
-
+            throw new Error(data.message || "Message could not be sent.");
         }
 
-
-        /*
-         * IMPORTANT:
-         * Render sender message immediately.
-         */
-
-        if (data.message) {
-
-            addOrUpdateMessage(
-                data.message
-            );
-
+        if (data.message && typeof data.message === "object") {
+            addOrUpdateMessage(data.message);
+        } else {
+            await loadMessages(selectedUserId);
         }
-
 
         input.value = "";
-
         autoResizeMessageInput();
 
-
     } catch (error) {
-
-        console.error(
-            "Send message error:",
-            error
-        );
-
-        showToast(
-            error.message ||
-            "Message failed.",
-            "error"
-        );
-
+        console.error("Send message error:", error);
+        showToast(error.message || "Message failed.", "error");
     } finally {
-
         isSendingMessage = false;
-
     }
-
 }
 
 
 /* =========================================================
-   25. MEDIA UPLOAD
+   16. MEDIA UPLOAD
    ========================================================= */
 
-async function handleMediaUpload(
-    event
-) {
+async function handleMediaUpload(event) {
 
-    const file =
-        event.target.files &&
-        event.target.files[0];
-
-
-    if (!file) {
-        return;
-    }
-
-
-    /*
-     * Reset input so same file
-     * can be selected again.
-     */
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
 
     event.target.value = "";
 
-
     if (!selectedUserId) {
-
-        showToast(
-            "Select a contact first.",
-            "error"
-        );
-
+        showToast("Select a contact first.", "error");
         return;
     }
 
-
-    const maxSize =
-        50 * 1024 * 1024;
-
-
-    if (file.size > maxSize) {
-
-        showToast(
-            "Maximum file size is 50 MB.",
-            "error"
-        );
-
+    if (file.size > 50 * 1024 * 1024) {
+        showToast("Maximum file size is 50 MB.", "error");
         return;
     }
 
-
-    const isImage =
-        file.type.startsWith(
-            "image/"
-        );
-
-
-    const isVideo =
-        file.type.startsWith(
-            "video/"
-        );
-
-
-    if (!isImage && !isVideo) {
-
-        showToast(
-            "Only image and video files are allowed.",
-            "error"
-        );
-
+    if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
+        showToast("Only image and video files are allowed.", "error");
         return;
     }
-
 
     try {
+        showToast("Uploading media...", "info");
 
-        showToast(
-            "Uploading media...",
-            "info"
-        );
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("receiver_id", String(selectedUserId));
 
-
-        const formData =
-            new FormData();
-
-
-        /*
-         * IMPORTANT:
-         * Backend expects "file".
-         */
-
-        formData.append(
-            "file",
-            file
-        );
-
-
-        formData.append(
-            "receiver_id",
-            String(
-                selectedUserId
-            )
-        );
-
-
-        const data =
-            await apiRequest(
-                CONFIG.uploadMediaUrl,
-                {
-                    method: "POST",
-                    body: formData
-                }
-            );
-
+        const data = await apiRequest(CONFIG.uploadMediaUrl, {
+            method: "POST",
+            body: formData
+        });
 
         if (!data.success) {
-
-            throw new Error(
-                data.message ||
-                "Media upload failed."
-            );
-
+            throw new Error(data.message || "Media upload failed.");
         }
 
+        // Show to the sender if the API returned the full message
+        if (data.message && typeof data.message === "object") {
+            addOrUpdateMessage(data.message);
+        }
 
-        /*
-         * Show immediately to sender.
-         */
+        // Tell the server to notify the receiver.
+        // The server answers with "media_sent" which also shows
+        // the media on the sender's screen (duplicates are ignored).
+        const messageId =
+            data.message_id ||
+            (data.message && data.message.id) ||
+            data.id;
 
-        addOrUpdateMessage(
-            data.message || data
-        );
-
-
-        /*
-         * Notify receiver through WebSocket.
-         */
-
-        if (
-            data.message_id &&
-            socket &&
-            socket.readyState ===
-            WebSocket.OPEN
-        ) {
-
+        if (messageId) {
             sendSocketMessage({
-
                 type: "media_message",
-
-                receiver_id:
-                    Number(
-                        selectedUserId
-                    ),
-
-                message_id:
-                    Number(
-                        data.message_id
-                    )
-
+                receiver_id: Number(selectedUserId),
+                message_id: Number(messageId)
             });
-
         }
 
-
-        showToast(
-            "Media sent.",
-            "success"
-        );
-
+        showToast("Media sent.", "success");
 
     } catch (error) {
-
-        console.error(
-            "Media upload error:",
-            error
-        );
-
-        showToast(
-            error.message ||
-            "Media upload failed.",
-            "error"
-        );
-
+        console.error("Media upload error:", error);
+        showToast(error.message || "Media upload failed.", "error");
     }
-
 }
 
 
 /* =========================================================
-   26. CONTACT PREVIEW
-   ========================================================= */
-
-function updateContactPreview(
-    userId,
-    text,
-    time
-) {
-
-    const contact =
-        contactMap.get(
-            Number(userId)
-        );
-
-
-    if (!contact) {
-        return;
-    }
-
-
-    contact.last_message =
-        text || "";
-
-
-    contact.last_time =
-        time ||
-        formatMessageTime(
-            new Date()
-        );
-
-
-    renderContacts(
-        elements.contactSearch
-            ? elements.contactSearch.value.trim()
-            : ""
-    );
-
-}
-
-
-/* =========================================================
-   27. WEBSOCKET CONNECT
+   17. WEBSOCKET
    ========================================================= */
 
 function connectWebSocket() {
 
-    if (
-        !CONFIG.websocketUrl
-    ) {
-
-        console.error(
-            "WebSocket URL is missing."
-        );
-
+    if (!CONFIG.websocketUrl) {
+        console.error("WebSocket URL is missing.");
         return;
-
     }
-
 
     if (
         socket &&
-        (
-            socket.readyState ===
-            WebSocket.OPEN ||
-            socket.readyState ===
-            WebSocket.CONNECTING
-        )
+        (socket.readyState === WebSocket.OPEN ||
+         socket.readyState === WebSocket.CONNECTING)
     ) {
-
         return;
-
     }
-
 
     try {
-
-        socket =
-            new WebSocket(
-                CONFIG.websocketUrl
-            );
-
+        socket = new WebSocket(CONFIG.websocketUrl);
     } catch (error) {
-
-        console.error(
-            "WebSocket creation error:",
-            error
-        );
-
+        console.error("WebSocket creation error:", error);
         scheduleWebSocketReconnect();
-
         return;
-
     }
 
-
-    socket.addEventListener(
-        "open",
-        handleSocketOpen
-    );
-
-
-    socket.addEventListener(
-        "message",
-        handleSocketMessage
-    );
-
-
-    socket.addEventListener(
-        "close",
-        handleSocketClose
-    );
-
-
-    socket.addEventListener(
-        "error",
-        handleSocketError
-    );
-
+    socket.addEventListener("open", handleSocketOpen);
+    socket.addEventListener("message", handleSocketMessage);
+    socket.addEventListener("close", handleSocketClose);
+    socket.addEventListener("error", handleSocketError);
 }
 
-
-/* =========================================================
-   28. SOCKET OPEN
-   ========================================================= */
-
 function handleSocketOpen() {
-
-    console.log(
-        "WebSocket connected."
-    );
-
+    console.log("WebSocket connected.");
 
     socketReconnectAttempts = 0;
 
-
-    if (!socketWasConnected) {
-
-        socketWasConnected = true;
-
-    }
-
-
-    /*
-     * Refresh contacts/presence after
-     * WebSocket becomes available.
-     */
-
     if (selectedUserId) {
-
-        loadPresence(
-            selectedUserId
-        );
-
+        loadPresence(selectedUserId);
     }
-
 }
-
-
-/* =========================================================
-   29. SOCKET CLOSE
-   ========================================================= */
 
 function handleSocketClose() {
+    console.warn("WebSocket disconnected.");
 
-    console.warn(
-        "WebSocket disconnected."
-    );
-
-
-    scheduleWebSocketReconnect();
-
+    if (!isUnloading) {
+        scheduleWebSocketReconnect();
+    }
 }
 
-
-/* =========================================================
-   30. SOCKET ERROR
-   ========================================================= */
-
-function handleSocketError(
-    error
-) {
-
-    console.error(
-        "WebSocket error:",
-        error
-    );
-
+function handleSocketError(error) {
+    console.error("WebSocket error:", error);
 }
-
-
-/* =========================================================
-   31. SOCKET RECONNECT
-   ========================================================= */
 
 function scheduleWebSocketReconnect() {
 
-    if (
-        socketReconnectTimer
-    ) {
-
-        return;
-
-    }
-
+    if (socketReconnectTimer) return;
 
     socketReconnectAttempts++;
 
+    const delay = Math.min(
+        1000 * Math.pow(2, socketReconnectAttempts - 1),
+        10000
+    );
 
-    const delay =
-        Math.min(
-            1000 *
-            Math.pow(
-                2,
-                socketReconnectAttempts - 1
-            ),
-            10000
-        );
-
-
-    socketReconnectTimer =
-        setTimeout(
-            function () {
-
-                socketReconnectTimer =
-                    null;
-
-                connectWebSocket();
-
-            },
-            delay
-        );
-
+    socketReconnectTimer = setTimeout(function () {
+        socketReconnectTimer = null;
+        connectWebSocket();
+    }, delay);
 }
 
+function sendSocketMessage(data) {
 
-/* =========================================================
-   32. SOCKET SEND
-   ========================================================= */
-
-function sendSocketMessage(
-    data
-) {
-
-    if (
-        !socket ||
-        socket.readyState !==
-        WebSocket.OPEN
-    ) {
-
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
         return false;
-
     }
-
 
     try {
-
-        socket.send(
-            JSON.stringify(data)
-        );
-
+        socket.send(JSON.stringify(data));
         return true;
-
     } catch (error) {
-
-        console.error(
-            "Socket send error:",
-            error
-        );
-
+        console.error("Socket send error:", error);
         return false;
-
     }
-
 }
 
 
 /* =========================================================
-   33. SOCKET MESSAGE HANDLER
+   18. SOCKET MESSAGE HANDLER
    ========================================================= */
 
-async function handleSocketMessage(
-    event
-) {
+async function handleIncomingMessage(message) {
+
+    if (!message) return;
+
+    const senderId = Number(message.sender_id || 0);
+
+    // The chat with this sender is open: show it immediately
+    if (selectedUserId && Number(selectedUserId) === senderId) {
+
+        addOrUpdateMessage(message);
+
+        // Only the socket is needed here (no extra HTTP call)
+        await markCurrentChatRead(false);
+
+    } else {
+
+        increaseUnreadCount(senderId);
+
+        updateContactPreview(
+            senderId,
+            getPreviewText(message) || "New message",
+            message.time
+        );
+
+        showToast(
+            `New message from ${
+                message.sender ||
+                getContactDisplayName(contactMap.get(senderId))
+            }`,
+            "info"
+        );
+    }
+
+    await loadNotifications();
+}
+
+async function handleSocketMessage(event) {
 
     let data;
 
-
     try {
-
-        data =
-            JSON.parse(
-                event.data
-            );
-
+        data = JSON.parse(event.data);
     } catch (error) {
-
-        console.error(
-            "Invalid WebSocket JSON:",
-            event.data
-        );
-
+        console.error("Invalid WebSocket JSON:", event.data);
         return;
-
     }
 
+    console.log("WebSocket:", data);
 
-    console.log(
-        "WebSocket:",
-        data
-    );
+    switch (data.type) {
 
+        case "connection":
+            break;
 
-    const type =
-        data.type;
+        case "error":
+            showToast(data.message || "Server error.", "error");
+            break;
 
-
-    switch (type) {
-
-
-        /* =====================================================
-           MESSAGE SENT
-           ===================================================== */
-
+        /* ---- I sent a text message: show it on MY screen ---- */
         case "message_sent": {
-
-            const message =
-                normalizeMessage(
-                    data.message || data
-                );
-
-
-            if (message) {
-
-                /*
-                 * THIS FIXES:
-                 * Sender not seeing own message.
-                 */
-
-                addOrUpdateMessage(
-                    message
-                );
-
-            }
-
+            // IMPORTANT: pass the WHOLE object (not data.message)
+            addOrUpdateMessage(data);
             break;
-
         }
 
+        /* ---- I sent media: show it on MY screen ---- */
+        case "media_sent": {
+            addOrUpdateMessage(data);
+            break;
+        }
 
-        /* =====================================================
-           INCOMING CHAT MESSAGE
-           ===================================================== */
-
+        /* ---- Someone sent me a text message ---- */
         case "chat_message": {
-
-            const message =
-                normalizeMessage(
-                    data.message || data
-                );
-
-
-            if (!message) {
-                break;
-            }
-
-
-            const senderId =
-                Number(
-                    message.sender_id ||
-                    data.sender_id ||
-                    0
-                );
-
-
-            /*
-             * Receiver acknowledges delivery.
-             */
-
-            if (
-                message.id &&
-                senderId
-            ) {
-
-                sendSocketMessage({
-
-                    type:
-                        "message_delivered",
-
-                    sender_id:
-                        senderId,
-
-                    message_id:
-                        Number(
-                            message.id
-                        )
-
-                });
-
-            }
-
-
-            /*
-             * If this chat is open,
-             * display immediately.
-             */
-
-            if (
-                selectedUserId &&
-                Number(
-                    selectedUserId
-                ) === senderId
-            ) {
-
-                addOrUpdateMessage(
-                    message
-                );
-
-
-                await markCurrentChatRead();
-
-            }
-
-            else {
-
-                /*
-                 * Message belongs to
-                 * another contact.
-                 */
-
-                increaseUnreadCount(
-                    senderId
-                );
-
-
-                updateContactPreview(
-                    senderId,
-                    message.content ||
-                    "New message",
-                    message.time
-                );
-
-
-                showToast(
-                    `New message from ${
-                        message.sender ||
-                        getContactDisplayName(
-                            contactMap.get(
-                                senderId
-                            )
-                        )
-                    }`,
-                    "info"
-                );
-
-            }
-
-
-            await loadNotifications();
-
+            await handleIncomingMessage(normalizeMessage(data));
             break;
-
         }
 
-
-        /* =====================================================
-           DELIVERY ACK REQUEST
-           ===================================================== */
-
-        case "request_delivery_ack": {
-
-            const messageId =
-                Number(
-                    data.message_id ||
-                    data.id ||
-                    0
-                );
-
-
-            const senderId =
-                Number(
-                    data.sender_id ||
-                    data.from_user_id ||
-                    0
-                );
-
-
-            if (
-                messageId &&
-                senderId
-            ) {
-
-                sendSocketMessage({
-
-                    type:
-                        "message_delivered",
-
-                    sender_id:
-                        senderId,
-
-                    message_id:
-                        messageId
-
-                });
-
-            }
-
-            break;
-
-        }
-
-
-        /* =====================================================
-           MESSAGE DELIVERED
-           ===================================================== */
-
-        case "message_delivered": {
-
-            const messageId =
-                Number(
-                    data.message_id ||
-                    data.id ||
-                    0
-                );
-
-
-            updateMessageStatus(
-                messageId,
-                {
-                    is_delivered: true
-                }
-            );
-
-            break;
-
-        }
-
-
-        /* =====================================================
-           MESSAGES READ
-           ===================================================== */
-
-        case "messages_read": {
-
-            const messageIds =
-                Array.isArray(
-                    data.message_ids
-                )
-                    ? data.message_ids
-                    : null;
-
-
-            if (messageIds) {
-
-                messageIds.forEach(
-                    function (id) {
-
-                        updateMessageStatus(
-                            Number(id),
-                            {
-                                is_delivered: true,
-                                is_read: true
-                            }
-                        );
-
-                    }
-                );
-
-            }
-
-            else {
-
-                /*
-                 * Backend may send only
-                 * sender_id.
-                 *
-                 * Mark current sent messages
-                 * as read.
-                 */
-
-                markCurrentSentMessagesRead();
-
-            }
-
-
-            break;
-
-        }
-
-
-        /* =====================================================
-           MEDIA MESSAGE
-           ===================================================== */
-
+        /* ---- Someone sent me media ---- */
         case "media_message": {
+            await handleIncomingMessage(normalizeMessage(data));
+            break;
+        }
 
-            /*
-             * Depending on consumer implementation,
-             * media_message may contain the complete
-             * message or only message_id.
-             */
+        /* ---- Server asks me to confirm delivery ---- */
+        case "request_delivery_ack": {
+            const messageId = Number(data.message_id || data.id || 0);
+            const senderId = Number(data.sender_id || 0);
 
-            if (
-                data.message &&
-                typeof data.message ===
-                "object"
-            ) {
-
-                addOrUpdateMessage(
-                    data.message
-                );
-
+            if (messageId && senderId) {
+                sendSocketMessage({
+                    type: "message_delivered",
+                    sender_id: senderId,
+                    message_id: messageId
+                });
             }
+            break;
+        }
 
-            else if (
-                data.message_id
-            ) {
+        /* ---- My message was delivered ---- */
+        case "message_delivered": {
+            updateMessageStatus(
+                Number(data.message_id || data.id || 0),
+                { is_delivered: true }
+            );
+            break;
+        }
 
-                /*
-                 * Receiver can refresh current
-                 * conversation to obtain media.
-                 */
-
-                if (
-                    selectedUserId
-                ) {
-
-                    await loadMessages(
-                        selectedUserId
-                    );
-
-                }
-
+        /* ---- My messages were read ---- */
+        case "messages_read": {
+            if (Array.isArray(data.message_ids)) {
+                data.message_ids.forEach(function (id) {
+                    updateMessageStatus(Number(id), {
+                        is_delivered: true,
+                        is_read: true
+                    });
+                });
+            } else {
+                markCurrentSentMessagesRead();
             }
-
             break;
-
         }
 
-
-        /* =====================================================
-           VOICE CALL OFFER
-           ===================================================== */
-
-        case "call_offer": {
-
-            await handleIncomingCall(
-                data
-            );
-
+        /* ---- Voice calls ---- */
+        case "call_offer":
+            await handleIncomingCall(data);
             break;
 
-        }
-
-
-        /* =====================================================
-           VOICE CALL ANSWER
-           ===================================================== */
-
-        case "call_answer": {
-
-            await handleCallAnswer(
-                data
-            );
-
+        case "call_answer":
+            await handleCallAnswer(data);
             break;
 
-        }
-
-
-        /* =====================================================
-           ICE CANDIDATE
-           ===================================================== */
-
-        case "ice_candidate": {
-
-            await handleIceCandidate(
-                data
-            );
-
+        case "ice_candidate":
+            await handleIceCandidate(data);
             break;
 
-        }
-
-
-        /* =====================================================
-           CALL REJECTED
-           ===================================================== */
-
-        case "call_rejected": {
-
-            showToast(
-                "Call rejected.",
-                "error"
-            );
-
-
-            updateCallStatus(
-                "Call rejected"
-            );
-
-
-            setTimeout(
-                function () {
-
-                    cleanupCall();
-
-                },
-                1000
-            );
-
+        case "call_rejected":
+            showToast("Call rejected.", "error");
+            updateCallStatus("Call rejected");
+            setTimeout(cleanupCall, 1000);
             break;
 
-        }
-
-
-        /* =====================================================
-           CALL ENDED
-           ===================================================== */
-
-        case "call_ended": {
-
-            updateCallStatus(
-                "Call ended"
-            );
-
-
-            setTimeout(
-                function () {
-
-                    cleanupCall();
-
-                },
-                500
-            );
-
+        case "call_ended":
+            updateCallStatus("Call ended");
+            setTimeout(cleanupCall, 500);
             break;
-
-        }
-
 
         default:
-
-            console.log(
-                "Unhandled WebSocket event:",
-                type,
-                data
-            );
-
+            console.log("Unhandled WebSocket event:", data.type, data);
             break;
-
     }
-
 }
 
 
 /* =========================================================
-   34. INCREASE UNREAD COUNT
-   ========================================================= */
-
-function increaseUnreadCount(
-    userId
-) {
-
-    const contact =
-        contactMap.get(
-            Number(userId)
-        );
-
-
-    if (!contact) {
-        return;
-    }
-
-
-    contact.unread_count =
-        Number(
-            contact.unread_count || 0
-        ) + 1;
-
-
-    renderContacts();
-
-}
-
-
-/* =========================================================
-   35. UPDATE MESSAGE STATUS
-   ========================================================= */
-
-function updateMessageStatus(
-    messageId,
-    status
-) {
-
-    if (!messageId) {
-        return;
-    }
-
-
-    const element =
-        messageElements.get(
-            Number(messageId)
-        );
-
-
-    if (!element) {
-        return;
-    }
-
-
-    const statusElement =
-        element.querySelector(
-            '[data-status="true"]'
-        );
-
-
-    if (!statusElement) {
-        return;
-    }
-
-
-    if (status.is_read) {
-
-        statusElement.className =
-            "message-status read";
-
-        statusElement.textContent =
-            "✓✓";
-
-    }
-
-    else if (status.is_delivered) {
-
-        statusElement.className =
-            "message-status delivered";
-
-        statusElement.textContent =
-            "✓✓";
-
-    }
-
-}
-
-
-/* =========================================================
-   36. MARK ALL CURRENT SENT MESSAGES READ
-   ========================================================= */
-
-function markCurrentSentMessagesRead() {
-
-    messageElements.forEach(
-        function (element) {
-
-            const status =
-                element.querySelector(
-                    '[data-status="true"]'
-                );
-
-
-            if (!status) {
-                return;
-            }
-
-
-            status.className =
-                "message-status read";
-
-            status.textContent =
-                "✓✓";
-
-        }
-    );
-
-}
-
-
-/* =========================================================
-   37. CLEAR MESSAGES
+   19. MESSAGE AREA HELPERS
    ========================================================= */
 
 function clearMessages() {
 
     messageElements.clear();
 
+    if (!elements.messageContainer) return;
 
-    if (
-        !elements.messageContainer
-    ) {
-
-        return;
-
-    }
-
-
-    elements.messageContainer.innerHTML =
-        "";
-
+    elements.messageContainer.innerHTML = "";
 
     if (elements.messageLoading) {
-
-        elements.messageContainer.appendChild(
-            elements.messageLoading
-        );
-
+        elements.messageContainer.appendChild(elements.messageLoading);
     }
-
 }
 
+function renderEmptyMessages(text = "No messages yet") {
 
-/* =========================================================
-   38. EMPTY MESSAGE STATE
-   ========================================================= */
-
-function renderEmptyMessages(
-    text = "No messages yet"
-) {
-
-    if (
-        !elements.messageContainer
-    ) {
-
-        return;
-
-    }
-
+    if (!elements.messageContainer) return;
 
     clearEmptyMessageState();
 
-
-    const empty =
-        document.createElement(
-            "div"
-        );
-
-    empty.className =
-        "message-empty";
-
-
-    empty.textContent =
-        text;
-
-
     elements.messageContainer.appendChild(
-        empty
+        createEl("div", "message-empty", text)
     );
-
 }
-
 
 function clearEmptyMessageState() {
 
-    if (
-        !elements.messageContainer
-    ) {
+    if (!elements.messageContainer) return;
 
-        return;
+    const empty = elements.messageContainer.querySelector(".message-empty");
+    if (empty) empty.remove();
 
-    }
-
-
-    const empty =
-        elements.messageContainer.querySelector(
-            ".message-empty"
-        );
-
-
-    if (empty) {
-
-        empty.remove();
-
-    }
-
-
-    const oldEmpty =
-        elements.messageContainer.querySelector(
-            ".empty-contacts"
-        );
-
-
-    if (oldEmpty) {
-
-        oldEmpty.remove();
-
-    }
-
+    const oldEmpty = elements.messageContainer.querySelector(".empty-contacts");
+    if (oldEmpty) oldEmpty.remove();
 }
 
-
-/* =========================================================
-   39. MESSAGE LOADING
-   ========================================================= */
-
-function showMessageLoading(
-    show
-) {
-
-    if (!elements.messageLoading) {
-        return;
+function showMessageLoading(show) {
+    if (elements.messageLoading) {
+        elements.messageLoading.classList.toggle("hidden", !show);
     }
-
-
-    if (show) {
-
-        elements.messageLoading.classList.remove(
-            "hidden"
-        );
-
-    }
-
-    else {
-
-        elements.messageLoading.classList.add(
-            "hidden"
-        );
-
-    }
-
 }
-
-
-/* =========================================================
-   40. CONTACT LOADING
-   ========================================================= */
-
-function showContactLoading(
-    show
-) {
-
-    if (!elements.contactLoading) {
-        return;
-    }
-
-
-    if (show) {
-
-        elements.contactLoading.classList.remove(
-            "hidden"
-        );
-
-    }
-
-    else {
-
-        elements.contactLoading.classList.add(
-            "hidden"
-        );
-
-    }
-
-}
-
-
-/* =========================================================
-   41. CONTACT ERROR
-   ========================================================= */
-
-function renderContactError(
-    text
-) {
-
-    if (
-        !elements.contactList
-    ) {
-
-        return;
-
-    }
-
-
-    elements.contactList.innerHTML =
-        "";
-
-
-    const error =
-        document.createElement(
-            "div"
-        );
-
-    error.className =
-        "contact-empty error";
-
-    error.textContent =
-        text;
-
-
-    elements.contactList.appendChild(
-        error
-    );
-
-}
-
-
-/* =========================================================
-   42. SCROLL MESSAGES
-   ========================================================= */
 
 function scrollMessagesToBottom() {
 
-    if (
-        !elements.messageContainer
-    ) {
+    if (!elements.messageContainer) return;
 
-        return;
+    requestAnimationFrame(function () {
+        elements.messageContainer.scrollTop =
+            elements.messageContainer.scrollHeight;
+    });
+}
 
-    }
+function autoResizeMessageInput() {
 
+    if (!elements.messageInput) return;
 
-    requestAnimationFrame(
-        function () {
+    // Your HTML uses <input type="text">, which must keep its height.
+    if (elements.messageInput.tagName !== "TEXTAREA") return;
 
-            elements.messageContainer.scrollTop =
-                elements.messageContainer.scrollHeight;
-
-        }
-    );
-
+    elements.messageInput.style.height = "auto";
+    elements.messageInput.style.height =
+        Math.min(elements.messageInput.scrollHeight, 120) + "px";
 }
 
 
 /* =========================================================
-   43. PRESENCE
+   20. PRESENCE
    ========================================================= */
 
-async function loadPresence(
-    userId
-) {
+async function loadPresence(userId) {
 
-    if (!userId) {
-        return;
-    }
-
+    if (!userId) return;
 
     try {
-
-        const url =
-            `${CONFIG.searchUsersUrl
-                ? `/api/users/${userId}/presence/`
-                : `/api/users/${userId}/presence/`
-            }`;
-
-
-        const data =
-            await apiRequest(
-                url,
-                {
-                    method: "GET"
-                }
-            );
-
-
-        const contact =
-            contactMap.get(
-                Number(userId)
-            );
-
-
-        if (contact) {
-
-            contact.is_online =
-                Boolean(
-                    data.is_online
-                );
-
-        }
-
-
-        updatePresenceUI(
-            data
+        const data = await apiRequest(
+            `${CONFIG.presenceUrl || "/api/users/"}${userId}/presence/`,
+            { method: "GET" }
         );
 
+        const contact = contactMap.get(Number(userId));
+
+        if (contact) {
+            contact.is_online = Boolean(data.is_online);
+        }
+
+        // Ignore a late answer for a chat that is no longer open
+        if (Number(userId) === Number(selectedUserId)) {
+            updatePresenceUI(data);
+        }
 
         renderContacts();
 
-
     } catch (error) {
-
-        console.warn(
-            "Presence error:",
-            error
-        );
-
+        console.warn("Presence error:", error);
     }
-
 }
 
+function updatePresenceUI(data) {
 
-function updatePresenceUI(
-    data
-) {
-
-    if (
-        !elements.chatStatus
-    ) {
-
-        return;
-
-    }
-
+    if (!elements.chatStatus) return;
 
     if (data.is_online) {
-
+        elements.chatStatus.textContent = "online";
+    } else if (data.last_seen) {
         elements.chatStatus.textContent =
-            "online";
-
-        return;
-
+            `last seen ${formatLastSeen(data.last_seen)}`;
+    } else {
+        elements.chatStatus.textContent = "offline";
     }
-
-
-    if (data.last_seen) {
-
-        elements.chatStatus.textContent =
-            `last seen ${formatLastSeen(
-                data.last_seen
-            )}`;
-
-    }
-
-    else {
-
-        elements.chatStatus.textContent =
-            "offline";
-
-    }
-
 }
-
-
-/* =========================================================
-   44. PRESENCE POLLING
-   ========================================================= */
 
 function startPresencePolling() {
 
     stopPresencePolling();
 
+    if (!selectedUserId) return;
 
-    if (!selectedUserId) {
-        return;
-    }
-
-
-    presenceTimer =
-        setInterval(
-            function () {
-
-                if (selectedUserId) {
-
-                    loadPresence(
-                        selectedUserId
-                    );
-
-                }
-
-            },
-            10000
-        );
-
+    presenceTimer = setInterval(function () {
+        if (selectedUserId) {
+            loadPresence(selectedUserId);
+        }
+    }, 10000);
 }
-
 
 function stopPresencePolling() {
-
     if (presenceTimer) {
-
-        clearInterval(
-            presenceTimer
-        );
-
+        clearInterval(presenceTimer);
         presenceTimer = null;
-
     }
-
 }
+
+
+/* =========================================================
+   21. NOTIFICATIONS
+   ========================================================= */
 
 async function loadNotifications() {
 
+    if (!CONFIG.notificationsUrl) return;
+
     try {
+        const data = await apiRequest(CONFIG.notificationsUrl, {
+            method: "GET"
+        });
 
-        const data =
-            await apiRequest(
-                CONFIG.notificationsUrl,
-                {
-                    method: "GET"
-                }
-            );
+        updateNotificationCount(Number(data.unread_count || 0));
+        renderNotifications(data.notifications || []);
 
+    } catch (error) {
+        console.warn("Notifications error:", error);
+    }
+}
 
-        updateNotificationCount(
-            Number(
-                data.unread_count || 0
+function updateNotificationCount(count) {
+
+    if (!elements.notificationCount) return;
+
+    if (count > 0) {
+        elements.notificationCount.textContent = count > 99 ? "99+" : String(count);
+        elements.notificationCount.classList.remove("hidden");
+    } else {
+        elements.notificationCount.textContent = "";
+        elements.notificationCount.classList.add("hidden");
+    }
+}
+
+function renderNotifications(notifications) {
+
+    if (!elements.notificationList) return;
+
+    elements.notificationList.innerHTML = "";
+
+    if (!notifications || notifications.length === 0) {
+        elements.notificationList.appendChild(
+            createEl("div", "notification-empty", "No notifications")
+        );
+        return;
+    }
+
+    notifications.forEach(function (notification) {
+
+        const item = createEl("div", "notification-item");
+
+        if (!notification.is_read) item.classList.add("unread");
+
+        item.appendChild(
+            createEl(
+                "div",
+                "notification-title",
+                notification.sender || "Notification"
             )
         );
 
-
-        renderNotifications(
-            data.notifications || []
+        item.appendChild(
+            createEl(
+                "div",
+                "notification-message",
+                notification.message || ""
+            )
         );
 
-
-    } catch (error) {
-
-        console.warn(
-            "Notifications error:",
-            error
+        item.appendChild(
+            createEl(
+                "div",
+                "notification-time",
+                notification.time || formatMessageTime(notification.created_at)
+            )
         );
 
-    }
-
+        elements.notificationList.appendChild(item);
+    });
 }
 
 
-function updateNotificationCount(
-    count
-) {
+/* =========================================================
+   22. VOICE CALL (WebRTC)
+   ========================================================= */
 
-    if (
-        !elements.notificationCount
-    ) {
+function createPeerConnection(userId) {
 
-        return;
+    currentCallUserId = Number(userId);
 
-    }
+    peerConnection = new RTCPeerConnection(RTC_CONFIG);
 
+    peerConnection.onicecandidate = function (event) {
 
-    if (count > 0) {
+        if (!event.candidate) return;
 
-        elements.notificationCount.textContent =
-            count > 99
-                ? "99+"
-                : String(count);
+        sendSocketMessage({
+            type: "ice_candidate",
+            receiver_id: Number(currentCallUserId),
+            candidate: event.candidate
+        });
+    };
 
-        elements.notificationCount.classList.remove(
-            "hidden"
-        );
+    peerConnection.ontrack = function (event) {
 
-    }
+        console.log("Remote audio received.");
 
-    else {
+        if (elements.remoteAudio) {
+            elements.remoteAudio.srcObject = event.streams[0];
 
-        elements.notificationCount.textContent =
-            "";
+            elements.remoteAudio.play().catch(function (error) {
+                console.warn("Audio autoplay blocked:", error);
 
-        elements.notificationCount.classList.add(
-            "hidden"
-        );
-
-    }
-
-}
-
-
-function renderNotifications(
-    notifications
-) {
-
-    if (
-        !elements.notificationList
-    ) {
-
-        return;
-
-    }
-
-
-    elements.notificationList.innerHTML =
-        "";
-
-
-    if (
-        !notifications ||
-        notifications.length === 0
-    ) {
-
-        const empty =
-            document.createElement(
-                "div"
-            );
-
-        empty.className =
-            "notification-empty";
-
-        empty.textContent =
-            "No notifications";
-
-
-        elements.notificationList.appendChild(
-            empty
-        );
-
-        return;
-
-    }
-
-
-    notifications.forEach(
-        function (notification) {
-
-            const item =
-                document.createElement(
-                    "div"
-                );
-
-            item.className =
-                "notification-item";
-
-
-            if (
-                !notification.is_read
-            ) {
-
-                item.classList.add(
-                    "unread"
-                );
-
-            }
-
-
-            const title =
-                document.createElement(
-                    "div"
-                );
-
-            title.className =
-                "notification-title";
-
-            title.textContent =
-                notification.sender ||
-                "Notification";
-
-
-            const message =
-                document.createElement(
-                    "div"
-                );
-
-            message.className =
-                "notification-message";
-
-            message.textContent =
-                notification.message ||
-                "";
-
-
-            const time =
-                document.createElement(
-                    "div"
-                );
-
-            time.className =
-                "notification-time";
-
-            time.textContent =
-                notification.time ||
-                formatMessageTime(
-                    notification.created_at
-                );
-
-
-            item.appendChild(
-                title
-            );
-
-            item.appendChild(
-                message
-            );
-
-            item.appendChild(
-                time
-            );
-
-
-            elements.notificationList.appendChild(
-                item
-            );
-
-        }
-    );
-
-}
-
-
-
-
-const RTC_CONFIG = {
-
-    iceServers: [
-
-        {
-            urls:
-                "stun:stun.l.google.com:19302"
-        }
-
-    ]
-
-};
-
-
-
-function createPeerConnection(
-    userId
-) {
-
-    currentCallUserId =
-        Number(userId);
-
-
-    peerConnection =
-        new RTCPeerConnection(
-            RTC_CONFIG
-        );
-
-
-    /*
-     * ICE candidate
-     */
-
-    peerConnection.onicecandidate =
-        function (event) {
-
-            if (
-                !event.candidate
-            ) {
-
-                return;
-
-            }
-
-
-            sendSocketMessage({
-
-                type:
-                    "ice_candidate",
-
-                receiver_id:
-                    Number(
-                        currentCallUserId
-                    ),
-
-                candidate:
-                    event.candidate
-
+                if (elements.enableAudioBtn) {
+                    elements.enableAudioBtn.classList.remove("hidden");
+                }
             });
+        }
+    };
 
-        };
+    peerConnection.onconnectionstatechange = function () {
 
+        if (!peerConnection) return;
 
-    /*
-     * Remote audio
-     */
+        const state = peerConnection.connectionState;
 
-    peerConnection.ontrack =
-        function (event) {
+        console.log("WebRTC connection state:", state);
 
-            console.log(
-                "Remote audio received."
-            );
+        if (state === "connected") {
+            callStarted = true;
+            updateCallStatus("Connected");
+        } else if (state === "connecting") {
+            updateCallStatus("Connecting...");
+        } else if (state === "disconnected") {
+            updateCallStatus("Disconnected");
+        } else if (state === "failed") {
+            updateCallStatus("Connection failed");
+            showToast("Voice call connection failed.", "error");
+        }
+    };
 
-
-            if (
-                elements.remoteAudio
-            ) {
-
-                elements.remoteAudio.srcObject =
-                    event.streams[0];
-
-
-                elements.remoteAudio.play()
-                    .catch(
-                        function (error) {
-
-                            console.warn(
-                                "Audio autoplay blocked:",
-                                error
-                            );
-
-                        }
-                    );
-
-            }
-
-        };
-
-
-    /*
-     * Connection state
-     */
-
-    peerConnection.onconnectionstatechange =
-        function () {
-
-            if (!peerConnection) {
-                return;
-            }
-
-
-            const state =
-                peerConnection.connectionState;
-
-
-            console.log(
-                "WebRTC connection state:",
-                state
-            );
-
-
-            if (
-                state === "connected"
-            ) {
-
-                callStarted = true;
-
-                updateCallStatus(
-                    "Connected"
-                );
-
-            }
-
-
-            if (
-                state === "connecting"
-            ) {
-
-                updateCallStatus(
-                    "Connecting..."
-                );
-
-            }
-
-
-            if (
-                state === "disconnected"
-            ) {
-
-                updateCallStatus(
-                    "Disconnected"
-                );
-
-            }
-
-
-            if (
-                state === "failed"
-            ) {
-
-                updateCallStatus(
-                    "Connection failed"
-                );
-
-
-                showToast(
-                    "Voice call connection failed.",
-                    "error"
-                );
-
-            }
-
-        };
-
-
-    /*
-     * ICE connection state
-     */
-
-    peerConnection.oniceconnectionstatechange =
-        function () {
-
-            if (!peerConnection) {
-                return;
-            }
-
-
-            console.log(
-                "ICE state:",
-                peerConnection.iceConnectionState
-            );
-
-        };
-
+    peerConnection.oniceconnectionstatechange = function () {
+        if (!peerConnection) return;
+        console.log("ICE state:", peerConnection.iceConnectionState);
+    };
 
     return peerConnection;
-
 }
 
+async function getMicrophone() {
+    return navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: false
+    });
+}
+
+function addLocalTracks() {
+    localStream.getTracks().forEach(function (track) {
+        peerConnection.addTrack(track, localStream);
+    });
+}
 
 async function startVoiceCall() {
 
     if (!selectedUserId) {
-
-        showToast(
-            "Select a contact first.",
-            "error"
-        );
-
+        showToast("Select a contact first.", "error");
         return;
-
     }
 
-
-    if (
-        !socket ||
-        socket.readyState !==
-        WebSocket.OPEN
-    ) {
-
-        showToast(
-            "Connecting to server...",
-            "error"
-        );
-
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        showToast("Connecting to server...", "error");
         connectWebSocket();
-
         return;
-
     }
-
 
     try {
+        currentCallUserId = Number(selectedUserId);
+        currentCallUsername = getContactDisplayName(selectedContact);
 
-        currentCallUserId =
-            Number(
-                selectedUserId
-            );
+        localStream = await getMicrophone();
 
+        createPeerConnection(currentCallUserId);
+        addLocalTracks();
 
-        currentCallUsername =
-            getContactDisplayName(
-                selectedContact
-            );
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
 
+        openCallModal(currentCallUsername);
+        updateCallStatus("Calling...");
 
-        /*
-         * Get microphone
-         */
-
-        localStream =
-            await navigator.mediaDevices.getUserMedia(
-                {
-                    audio: true,
-                    video: false
-                }
-            );
-
-
-        /*
-         * Create peer connection
-         */
-
-        createPeerConnection(
-            currentCallUserId
-        );
-
-
-        /*
-         * Add microphone track
-         */
-
-        localStream
-            .getTracks()
-            .forEach(
-                function (track) {
-
-                    peerConnection.addTrack(
-                        track,
-                        localStream
-                    );
-
-                }
-            );
-
-
-        /*
-         * Create offer
-         */
-
-        const offer =
-            await peerConnection.createOffer();
-
-
-        await peerConnection.setLocalDescription(
-            offer
-        );
-
-
-        /*
-         * Open call UI
-         */
-
-        openCallModal(
-            currentCallUsername
-        );
-
-
-        updateCallStatus(
-            "Calling..."
-        );
-
-
-        /*
-         * Send offer
-         */
-
-        const sent =
-            sendSocketMessage({
-
-                type:
-                    "call_offer",
-
-                receiver_id:
-                    Number(
-                        currentCallUserId
-                    ),
-
-                offer:
-                    offer
-
-            });
-
+        const sent = sendSocketMessage({
+            type: "call_offer",
+            receiver_id: Number(currentCallUserId),
+            offer: offer
+        });
 
         if (!sent) {
-
-            throw new Error(
-                "Unable to send call request."
-            );
-
+            throw new Error("Unable to send call request.");
         }
 
-
     } catch (error) {
-
-        console.error(
-            "Start call error:",
-            error
-        );
-
-
+        console.error("Start call error:", error);
         showToast(
             "Unable to start voice call. Please allow microphone access.",
             "error"
         );
-
-
         cleanupCall();
-
     }
-
 }
 
-
-
-async function handleIncomingCall(
-    data
-) {
+async function handleIncomingCall(data) {
 
     try {
-
-        incomingCallerId =
-            Number(
-                data.caller_id ||
-                data.sender_id ||
-                data.user_id ||
-                0
-            );
-
+        incomingCallerId = Number(
+            data.caller_id || data.sender_id || data.user_id || 0
+        );
 
         incomingCallerName =
             data.caller_username ||
             data.sender ||
             data.username ||
-            getContactDisplayName(
-                contactMap.get(
-                    incomingCallerId
-                )
-            ) ||
+            getContactDisplayName(contactMap.get(incomingCallerId)) ||
             "Unknown";
 
+        incomingOffer = data.offer;
 
-        incomingOffer =
-            data.offer;
-
-
-        if (
-            !incomingCallerId ||
-            !incomingOffer
-        ) {
-
-            console.error(
-                "Invalid incoming call data:",
-                data
-            );
-
+        if (!incomingCallerId || !incomingOffer) {
+            console.error("Invalid incoming call data:", data);
             return;
-
         }
 
+        currentCallUserId = incomingCallerId;
+        currentCallUsername = incomingCallerName;
 
-        currentCallUserId =
-            incomingCallerId;
-
-
-        currentCallUsername =
-            incomingCallerName;
-
-
-        /*
-         * Show incoming call modal.
-         */
-
-        if (
-            elements.incomingCallerName
-        ) {
-
-            elements.incomingCallerName.textContent =
-                incomingCallerName;
-
+        if (elements.incomingCallerName) {
+            elements.incomingCallerName.textContent = incomingCallerName;
         }
 
-
-        if (
-            elements.incomingCallAvatar
-        ) {
-
+        if (elements.incomingCallAvatar) {
             elements.incomingCallAvatar.textContent =
-                getInitials(
-                    incomingCallerName
-                );
-
+                getInitials(incomingCallerName);
         }
 
-
-        openModal(
-            "incomingCallModal"
-        );
-
+        openModal("incomingCallModal");
 
     } catch (error) {
-
-        console.error(
-            "Incoming call error:",
-            error
-        );
-
+        console.error("Incoming call error:", error);
     }
-
 }
-
-
 
 async function acceptIncomingCall() {
 
-    if (
-        !incomingCallerId ||
-        !incomingOffer
-    ) {
-
-        return;
-
-    }
-
+    if (!incomingCallerId || !incomingOffer) return;
 
     try {
+        closeModal("incomingCallModal");
 
-        closeModal(
-            "incomingCallModal"
-        );
+        currentCallUserId = Number(incomingCallerId);
+        currentCallUsername = incomingCallerName || "Voice Call";
 
+        localStream = await getMicrophone();
 
-        currentCallUserId =
-            Number(
-                incomingCallerId
-            );
-
-
-        currentCallUsername =
-            incomingCallerName ||
-            "Voice Call";
-
-
-        /*
-         * Get microphone
-         */
-
-        localStream =
-            await navigator.mediaDevices.getUserMedia(
-                {
-                    audio: true,
-                    video: false
-                }
-            );
-
-
-        /*
-         * Create peer
-         */
-
-        createPeerConnection(
-            currentCallUserId
-        );
-
-
-        /*
-         * Add microphone
-         */
-
-        localStream
-            .getTracks()
-            .forEach(
-                function (track) {
-
-                    peerConnection.addTrack(
-                        track,
-                        localStream
-                    );
-
-                }
-            );
-
+        createPeerConnection(currentCallUserId);
+        addLocalTracks();
 
         await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(
-                incomingOffer
-            )
+            new RTCSessionDescription(incomingOffer)
         );
-
 
         await flushPendingIceCandidates();
 
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
 
-        /*
-         * Create answer
-         */
-
-        const answer =
-            await peerConnection.createAnswer();
-
-
-        await peerConnection.setLocalDescription(
-            answer
-        );
-
-
-        /*
-         * Open call modal
-         */
-
-        openCallModal(
-            currentCallUsername
-        );
-
-
-        updateCallStatus(
-            "Connecting..."
-        );
-
-
-        /*
-         * Send answer
-         */
+        openCallModal(currentCallUsername);
+        updateCallStatus("Connecting...");
 
         sendSocketMessage({
-
-            type:
-                "call_answer",
-
-            receiver_id:
-                Number(
-                    currentCallUserId
-                ),
-
-            answer:
-                answer
-
+            type: "call_answer",
+            caller_id: Number(currentCallUserId),
+            receiver_id: Number(currentCallUserId),
+            answer: answer
         });
-
 
         incomingOffer = null;
 
-
     } catch (error) {
-
-        console.error(
-            "Accept call error:",
-            error
-        );
-
-
-        showToast(
-            "Unable to accept call.",
-            "error"
-        );
-
-
+        console.error("Accept call error:", error);
+        showToast("Unable to accept call.", "error");
         cleanupCall();
-
     }
-
 }
 
-
-async function handleCallAnswer(
-    data
-) {
+async function handleCallAnswer(data) {
 
     try {
-
-        if (
-            !peerConnection
-        ) {
-
-            console.warn(
-                "No peer connection for answer."
-            );
-
+        if (!peerConnection) {
+            console.warn("No peer connection for answer.");
             return;
-
         }
 
-
-        const answer =
-            data.answer;
-
-
-        if (!answer) {
-
-            console.error(
-                "Answer not found."
-            );
-
+        if (!data.answer) {
+            console.error("Answer not found.");
             return;
-
         }
-
 
         await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(
-                answer
-            )
+            new RTCSessionDescription(data.answer)
         );
-
-
-        /*
-         * Add early ICE candidates.
-         */
 
         await flushPendingIceCandidates();
 
-
-        updateCallStatus(
-            "Connecting..."
-        );
-
+        updateCallStatus("Connecting...");
 
     } catch (error) {
-
-        console.error(
-            "Call answer error:",
-            error
-        );
-
-
-        showToast(
-            "Unable to establish voice call.",
-            "error"
-        );
-
+        console.error("Call answer error:", error);
+        showToast("Unable to establish voice call.", "error");
     }
-
 }
 
+async function handleIceCandidate(data) {
 
-async function handleIceCandidate(
-    data
-) {
+    if (!data.candidate) return;
 
-    if (
-        !data.candidate
-    ) {
-
+    if (!peerConnection || !peerConnection.remoteDescription) {
+        pendingIceCandidates.push(data.candidate);
         return;
-
     }
-
-
-    if (
-        !peerConnection ||
-        !peerConnection.remoteDescription
-    ) {
-
-        pendingIceCandidates.push(
-            data.candidate
-        );
-
-        return;
-
-    }
-
 
     try {
-
         await peerConnection.addIceCandidate(
-            new RTCIceCandidate(
-                data.candidate
-            )
+            new RTCIceCandidate(data.candidate)
         );
-
-
     } catch (error) {
-
-        console.error(
-            "ICE candidate error:",
-            error
-        );
-
+        console.error("ICE candidate error:", error);
     }
-
 }
-
 
 async function flushPendingIceCandidates() {
 
-    if (
-        !peerConnection
-    ) {
+    if (!peerConnection || !peerConnection.remoteDescription) return;
 
-        return;
-
-    }
-
-
-    if (
-        !peerConnection.remoteDescription
-    ) {
-
-        return;
-
-    }
-
-
-    const candidates =
-        [...pendingIceCandidates];
-
-
+    const candidates = [...pendingIceCandidates];
     pendingIceCandidates = [];
 
-
-    for (
-        const candidate
-        of candidates
-    ) {
-
+    for (const candidate of candidates) {
         try {
-
             await peerConnection.addIceCandidate(
-                new RTCIceCandidate(
-                    candidate
-                )
+                new RTCIceCandidate(candidate)
             );
-
-
         } catch (error) {
-
-            console.error(
-                "Pending ICE error:",
-                error
-            );
-
+            console.error("Pending ICE error:", error);
         }
-
     }
-
 }
-
-
 
 function rejectIncomingCall() {
 
-    if (
-        currentCallUserId
-    ) {
+    const callerId = incomingCallerId || currentCallUserId;
 
+    if (callerId) {
+        // FIX: send both names so the server always finds the caller
         sendSocketMessage({
-
-            type:
-                "call_rejected",
-
-            receiver_id:
-                Number(
-                    currentCallUserId
-                )
-
+            type: "call_rejected",
+            caller_id: Number(callerId),
+            receiver_id: Number(callerId)
         });
-
     }
 
-
-    closeModal(
-        "incomingCallModal"
-    );
-
+    closeModal("incomingCallModal");
 
     incomingOffer = null;
     incomingCallerId = null;
-
-
     currentCallUserId = null;
 
-
-    showToast(
-        "Call rejected.",
-        "info"
-    );
-
+    showToast("Call rejected.", "info");
 }
-
-
 
 function endCurrentCall() {
 
-    if (
-        currentCallUserId
-    ) {
-
+    if (currentCallUserId) {
         sendSocketMessage({
-
-            type:
-                "call_ended",
-
-            receiver_id:
-                Number(
-                    currentCallUserId
-                )
-
+            type: "call_ended",
+            receiver_id: Number(currentCallUserId)
         });
-
     }
-
 
     cleanupCall();
-
 }
 
-
-function cleanupCall(
-    closeSocket = true
-) {
+function cleanupCall() {
 
     if (localStream) {
-
-        localStream
-            .getTracks()
-            .forEach(
-                function (track) {
-
-                    track.stop();
-
-                }
-            );
-
-
+        localStream.getTracks().forEach(function (track) {
+            track.stop();
+        });
         localStream = null;
-
     }
-
 
     if (peerConnection) {
-
         try {
-
-            peerConnection.ontrack =
-                null;
-
-            peerConnection.onicecandidate =
-                null;
-
+            peerConnection.ontrack = null;
+            peerConnection.onicecandidate = null;
             peerConnection.close();
-
         } catch (error) {
-
-            console.warn(
-                error
-            );
-
+            console.warn(error);
         }
-
-
-        peerConnection =
-            null;
-
+        peerConnection = null;
     }
-
 
     pendingIceCandidates = [];
 
-
     incomingOffer = null;
     incomingCallerId = null;
-
 
     currentCallUserId = null;
     currentCallUsername = "";
 
-
     callStarted = false;
 
-
-    if (
-        elements.remoteAudio
-    ) {
-
-        elements.remoteAudio.srcObject =
-            null;
-
+    if (elements.remoteAudio) {
+        elements.remoteAudio.srcObject = null;
     }
 
+    if (elements.enableAudioBtn) {
+        elements.enableAudioBtn.classList.add("hidden");
+    }
 
-    closeModal(
-        "callModal"
-    );
+    closeModal("callModal");
+    closeModal("incomingCallModal");
+}
 
-    closeModal(
-        "incomingCallModal"
-    );
+function openCallModal(username) {
 
+    if (elements.callUserName) {
+        elements.callUserName.textContent = username || "Voice Call";
+    }
+
+    if (elements.callAvatar) {
+        elements.callAvatar.textContent = getInitials(username || "Voice Call");
+    }
+
+    openModal("callModal");
+}
+
+function updateCallStatus(text) {
+    if (elements.callStatus) {
+        elements.callStatus.textContent = text;
+    }
 }
 
 
+/* =========================================================
+   23. MODAL / TOAST / BUTTON HELPERS
+   ========================================================= */
 
-function openCallModal(
-    username
-) {
-
-    if (
-        elements.callUserName
-    ) {
-
-        elements.callUserName.textContent =
-            username ||
-            "Voice Call";
-
-    }
-
-
-    if (
-        elements.callAvatar
-    ) {
-
-        elements.callAvatar.textContent =
-            getInitials(
-                username ||
-                "Voice Call"
-            );
-
-    }
-
-
-    openModal(
-        "callModal"
-    );
-
+function openModal(modalId) {
+    const modal = $(modalId);
+    if (modal) modal.classList.remove("hidden");
 }
 
-
-function updateCallStatus(
-    text
-) {
-
-    if (
-        elements.callStatus
-    ) {
-
-        elements.callStatus.textContent =
-            text;
-
-    }
-
+function closeModal(modalId) {
+    const modal = $(modalId);
+    if (modal) modal.classList.add("hidden");
 }
 
+function showToast(message, type = "info") {
 
-function openModal(
-    modalId
-) {
-
-    const modal =
-        $(modalId);
-
-
-    if (!modal) {
+    if (!elements.toastContainer) {
+        console.log(message);
         return;
     }
 
+    const toast = createEl("div", `app-toast ${type}`, message);
 
-    modal.classList.remove(
-        "hidden"
-    );
+    elements.toastContainer.appendChild(toast);
 
+    setTimeout(function () {
+        toast.classList.add("show");
+    }, 10);
+
+    setTimeout(function () {
+        toast.classList.remove("show");
+        setTimeout(function () {
+            toast.remove();
+        }, 300);
+    }, 3000);
 }
 
+function showContactMessage(message, type = "info") {
 
-function closeModal(
-    modalId
-) {
-
-    const modal =
-        $(modalId);
-
-
-    if (!modal) {
+    if (!elements.contactMessage) {
+        showToast(message, type);
         return;
     }
 
-
-    modal.classList.add(
-        "hidden"
-    );
-
+    elements.contactMessage.textContent = message;
+    elements.contactMessage.className = `contact-message form-message ${type}`;
 }
 
+function setButtonLoading(button, loading) {
 
-function showToast(
-    message,
-    type = "info"
-) {
-
-    if (
-        !elements.toastContainer
-    ) {
-
-        console.log(
-            message
-        );
-
-        return;
-
-    }
-
-
-    const toast =
-        document.createElement(
-            "div"
-        );
-
-
-    toast.className =
-        `app-toast ${type}`;
-
-
-    toast.textContent =
-        message;
-
-
-    elements.toastContainer.appendChild(
-        toast
-    );
-
-
-    setTimeout(
-        function () {
-
-            toast.classList.add(
-                "show"
-            );
-
-        },
-        10
-    );
-
-
-    setTimeout(
-        function () {
-
-            toast.classList.remove(
-                "show"
-            );
-
-
-            setTimeout(
-                function () {
-
-                    toast.remove();
-
-                },
-                300
-            );
-
-        },
-        3000
-    );
-
-}
-
-
-function showContactMessage(
-    message,
-    type = "info"
-) {
-
-    if (
-        !elements.contactMessage
-    ) {
-
-        showToast(
-            message,
-            type
-        );
-
-        return;
-
-    }
-
-
-    elements.contactMessage.textContent =
-        message;
-
-
-    elements.contactMessage.className =
-        `form-message ${type}`;
-
-}
-
-
-
-function setButtonLoading(
-    button,
-    loading
-) {
-
-    if (!button) {
-        return;
-    }
-
+    if (!button) return;
 
     if (loading) {
-
-        button.dataset.originalText =
-            button.textContent;
-
-        button.textContent =
-            "Please wait...";
-
-        button.disabled =
-            true;
-
+        button.dataset.originalText = button.textContent;
+        button.textContent = "Please wait...";
+        button.disabled = true;
+    } else {
+        button.textContent = button.dataset.originalText || "Add Contact";
+        button.disabled = false;
     }
-
-    else {
-
-        button.textContent =
-            button.dataset.originalText ||
-            "Add Contact";
-
-        button.disabled =
-            false;
-
-    }
-
 }
 
 
+/* =========================================================
+   24. DATE / TIME FORMATTING
+   ========================================================= */
 
-function formatMessageTime(
-    value
-) {
+function formatMessageTime(value) {
 
-    if (!value) {
-        return "";
-    }
-
+    if (!value) return "";
 
     let date;
 
-
-    if (
-        value instanceof Date
-    ) {
-
+    if (value instanceof Date) {
         date = value;
+    } else {
+        const stringValue = String(value);
 
+        if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}$/.test(stringValue)) {
+            date = new Date(stringValue.replace(" ", "T"));
+        } else {
+            date = new Date(stringValue);
+        }
     }
 
-    else {
+    if (Number.isNaN(date.getTime())) return "";
 
-        const stringValue =
-            String(value);
-
-
-        if (
-            /^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}$/
-                .test(stringValue)
-        ) {
-
-            date =
-                new Date(
-                    stringValue.replace(
-                        " ",
-                        "T"
-                    )
-                );
-
-        }
-
-        else {
-
-            date =
-                new Date(
-                    stringValue
-                );
-
-        }
-
-    }
-
-
-    if (
-        Number.isNaN(
-            date.getTime()
-        )
-    ) {
-
-        return "";
-
-    }
-
-
-    return date.toLocaleTimeString(
-        [],
-        {
-            hour: "2-digit",
-            minute: "2-digit"
-        }
-    );
-
+    return date.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit"
+    });
 }
 
+function formatLastSeen(value) {
 
-function formatLastSeen(
-    value
-) {
+    if (!value) return "";
 
-    if (!value) {
-        return "";
-    }
+    const date = new Date(String(value).replace(" ", "T"));
 
+    if (Number.isNaN(date.getTime())) return String(value);
 
-    const date =
-        new Date(
-            String(value).replace(
-                " ",
-                "T"
-            )
-        );
+    const diff = Date.now() - date.getTime();
 
+    const oneMinute = 60 * 1000;
+    const oneHour = 60 * oneMinute;
+    const oneDay = 24 * oneHour;
 
-    if (
-        Number.isNaN(
-            date.getTime()
-        )
-    ) {
-
-        return String(value);
-
-    }
-
-
-    const now =
-        new Date();
-
-
-    const diff =
-        now.getTime() -
-        date.getTime();
-
-
-    const oneMinute =
-        60 * 1000;
-
-
-    const oneHour =
-        60 * oneMinute;
-
-
-    const oneDay =
-        24 * oneHour;
-
-
-    if (diff < oneMinute) {
-
-        return "just now";
-
-    }
-
+    if (diff < oneMinute) return "just now";
 
     if (diff < oneHour) {
-
-        const minutes =
-            Math.floor(
-                diff / oneMinute
-            );
-
-        return `${minutes} min ago`;
-
+        return `${Math.floor(diff / oneMinute)} min ago`;
     }
-
 
     if (diff < oneDay) {
-
-        const hours =
-            Math.floor(
-                diff / oneHour
-            );
-
-        return `${hours} hr ago`;
-
+        return `${Math.floor(diff / oneHour)} hr ago`;
     }
 
-
-    return date.toLocaleString(
-        [],
-        {
-            day: "2-digit",
-            month: "short",
-            hour: "2-digit",
-            minute: "2-digit"
-        }
-    );
-
+    return date.toLocaleString([], {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit"
+    });
 }
 
 
+/* =========================================================
+   25. GLOBAL ERROR LOGGER
+   ========================================================= */
 
-function autoResizeMessageInput() {
+window.addEventListener("error", function (event) {
+    console.error("JavaScript error:", event.error || event.message);
+});
 
-    if (
-        !elements.messageInput
-    ) {
-
-        return;
-
-    }
-
-
-    elements.messageInput.style.height =
-        "auto";
-
-
-    elements.messageInput.style.height =
-        Math.min(
-            elements.messageInput.scrollHeight,
-            120
-        ) + "px";
-
-}
-
-
-
-function normalizeContact(
-    raw
-) {
-
-    if (!raw) {
-        return null;
-    }
-
-
-
-    return {
-
-        id:
-            Number(
-                raw.id
-            ),
-
-        username:
-            raw.username ||
-            "",
-
-        first_name:
-            raw.first_name ||
-            "",
-
-        last_name:
-            raw.last_name ||
-            "",
-
-        nickname:
-            raw.nickname ||
-            "",
-
-        unread_count:
-            Number(
-                raw.unread_count || 0
-            ),
-
-        last_message:
-            raw.last_message ||
-            "",
-
-        last_time:
-            raw.last_time ||
-            "",
-
-        is_online:
-            Boolean(
-                raw.is_online
-            )
-
-    };
-
-}
-
-
-
-function addContactToLocalState(
-    contact
-) {
-
-    const normalized =
-        normalizeContact(
-            contact
-        );
-
-
-    if (!normalized) {
-        return;
-    }
-
-
-    const existing =
-        contactMap.get(
-            normalized.id
-        );
-
-
-    if (existing) {
-
-        Object.assign(
-            existing,
-            normalized
-        );
-
-    }
-
-    else {
-
-        contacts.unshift(
-            normalized
-        );
-
-    }
-
-
-    rebuildContactMap();
-
-    renderContacts();
-
-}
-
-
-window.addEventListener(
-    "error",
-    function (event) {
-
-        console.error(
-            "JavaScript error:",
-            event.error ||
-            event.message
-        );
-
-    }
-);
-
-
-
-
-console.log(
-    "WhatsApp Chat JS loaded successfully."
-);
+console.log("WhatsApp Chat JS loaded successfully.");
